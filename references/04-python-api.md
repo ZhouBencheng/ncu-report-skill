@@ -90,7 +90,7 @@ for i in range(n):
     vals.append(v)
 ```
 
-For PM sampling this is the timeline — index `i` is a time-ordered sample. Bucket these for an ASCII plot (see `helpers/plot_timeline.py`).
+For PM sampling this is the timeline — index `i` is a time-ordered sample. Bucket these for an ASCII plot (see [`../scripts/plot_timeline.py`](../scripts/plot_timeline.py)).
 
 ---
 
@@ -120,7 +120,7 @@ def per_pc_stalls(action, stall_metric):
 stalls = per_pc_stalls(action, "smsp__pcsamp_warps_issue_stalled_long_scoreboard")
 ```
 
-Aggregate by `(file, line)` and sort by total to get hottest stall lines. See `helpers/extract_stall_hotspots.py` for a complete implementation.
+Aggregate by `(file, line)` and sort by total to get hottest stall lines. See [`../scripts/extract_stall_hotspots.py`](../scripts/extract_stall_hotspots.py) for a complete implementation.
 
 ---
 

@@ -166,7 +166,7 @@ ncu --set full --section PmSampling --section PmSampling_WarpStates \
 python3 analyze_reports.py --run-dir "$PROFILE_RUN_DIR" --tag <tag>
 ```
 
-All of the helper scripts in `../helpers/` accept a `--run-dir` argument that defaults to the current directory, so you can either `cd $PROFILE_RUN_DIR && python3 ../path/to/analyze_reports.py` or pass the path explicitly.
+All of the helper scripts in `../scripts/` accept a `--run-dir` argument that defaults to the current directory, so you can either `cd $PROFILE_RUN_DIR && python3 ../path/to/analyze_reports.py` or pass the path explicitly.
 
 ---
 

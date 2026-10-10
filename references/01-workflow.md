@@ -116,7 +116,7 @@ Each `--set full` run takes ~30-60 seconds with many replay passes. Each `--set 
 
 ## Phase 4 — Extract structured data
 
-Do not eyeball the CLI output. Parse reports in Python so you can compare, aggregate, and archive. See [`04-python-api.md`](04-python-api.md) and use the helpers in [`../helpers/`](../helpers/).
+Do not eyeball the CLI output. Parse reports in Python so you can compare, aggregate, and archive. See [`04-python-api.md`](04-python-api.md) and use the helpers in [`../scripts/`](../scripts/).
 
 Minimum analysis artifacts to produce:
 

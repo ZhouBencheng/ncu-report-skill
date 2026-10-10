@@ -32,7 +32,7 @@ Things that should NOT be in the harness:
 
 ## Template
 
-A complete reusable template lives at [`../helpers/harness_template.cu`](../helpers/harness_template.cu). Customize these sections:
+A complete reusable template lives at [`../assets/harness_template.cu`](../assets/harness_template.cu). Customize these sections:
 
 1. **Replace `KERNEL_INCLUDE_GOES_HERE`** with `#include` or paste the kernel source.
 2. **Add explicit instantiations** for every template parameter combination you want to profile.
@@ -86,7 +86,7 @@ Load the exact BF16/F32 bytes from a `.safetensors` file shipped with the worklo
 - The user explicitly asks to profile with real data ("必须 load real workload").
 - You're comparing against a reference implementation's output for correctness.
 
-A header-only safetensors reader (no external deps) lives at [`../helpers/safetensors_loader.h`](../helpers/safetensors_loader.h). It parses the 8-byte header length + JSON header + raw tensor bytes — everything a safetensors file ships.
+A header-only safetensors reader (no external deps) lives at [`../assets/safetensors_loader.h`](../assets/safetensors_loader.h). It parses the 8-byte header length + JSON header + raw tensor bytes — everything a safetensors file ships.
 
 Example:
 ```cpp
@@ -149,7 +149,7 @@ Each `.jsonl` line looks like:
 
 Scalars are inline; tensors live in the safetensors blob at the given relative path (relative to the dataset root).
 
-**Helper: [`../helpers/list_flashinfer_workloads.py`](../helpers/list_flashinfer_workloads.py).**
+**Helper: [`../scripts/list_flashinfer_workloads.py`](../scripts/list_flashinfer_workloads.py).**
 
 ```bash
 export FIB_DATASET_PATH=/abs/path/to/flashinfer-trace
@@ -185,7 +185,7 @@ The principles still apply — you need to learn the dataset's layout and locate
 2. A list of concrete workload instances (what values the var axes take).
 3. The raw tensor bytes for each instance.
 
-Write a short inspector script equivalent to `list_flashinfer_workloads.py` for that format, drop it under `$PROFILE_RUN_DIR/harness/` if it's one-shot, or generalize it under `helpers/` if you'll reuse it.
+Write a short inspector script equivalent to `list_flashinfer_workloads.py` for that format, drop it under `$PROFILE_RUN_DIR/harness/` if it's one-shot, or generalize it under `scripts/` if you'll reuse it.
 
 ---
 

@@ -21,21 +21,21 @@ Most under-performing CUDA kernels are under-performing for exactly one reason t
 
 ## Quickstart (what to do when someone says "profile this kernel")
 
-0. **Create a new run directory first** under `profile/<run_name>/` at the repo root — **one directory per run**, never reuse an existing one. Each run contains its own `harness/`, `reports/`, `analysis/`, and `REPORT.md`. This rule is mandatory in this repo. See [`reference/00-directory-layout.md`](reference/00-directory-layout.md).
+0. **Create a new run directory first** under `profile/<run_name>/` at the repo root — **one directory per run**, never reuse an existing one. Each run contains its own `harness/`, `reports/`, `analysis/`, and `REPORT.md`. This rule is mandatory in this repo. See [`references/00-directory-layout.md`](references/00-directory-layout.md).
 
 1. **Decide what you're profiling.** What inputs? Which dispatch path? What question do you want answered? If the kernel takes variable-sized inputs (variable seq lengths, variable batch sizes), you must pick specific representative shapes from the user's workload — don't profile with arbitrary inputs.
 
-2. **Build a standalone harness** unless the user is profiling through their existing binary. Harnesses compile in seconds, run the kernel in isolation, and let you use `-lineinfo` cleanly so ncu can map SASS back to source. Compile into `profile/<run_name>/harness/`. See [`reference/02-harness-guide.md`](reference/02-harness-guide.md) and the template in [`helpers/harness_template.cu`](helpers/harness_template.cu).
+2. **Build a standalone harness** unless the user is profiling through their existing binary. Harnesses compile in seconds, run the kernel in isolation, and let you use `-lineinfo` cleanly so ncu can map SASS back to source. Compile into `profile/<run_name>/harness/`. See [`references/02-harness-guide.md`](references/02-harness-guide.md) and the template in [`assets/harness_template.cu`](assets/harness_template.cu).
 
-3. **Run two profiles**: `--set full` (with `PmSampling` sections) for the overview, and `--set source --section SourceCounters` for per-line stall attribution. Write outputs to `profile/<run_name>/reports/`. See [`reference/03-collection.md`](reference/03-collection.md).
+3. **Run two profiles**: `--set full` (with `PmSampling` sections) for the overview, and `--set source --section SourceCounters` for per-line stall attribution. Write outputs to `profile/<run_name>/reports/`. See [`references/03-collection.md`](references/03-collection.md).
 
-4. **Parse with `ncu_report`** Python module — not by eye-balling the CLI. Write analysis outputs to `profile/<run_name>/analysis/`. Use the helpers in [`helpers/`](helpers/). See [`reference/04-python-api.md`](reference/04-python-api.md).
+4. **Parse with `ncu_report`** Python module — not by eye-balling the CLI. Write analysis outputs to `profile/<run_name>/analysis/`. Use the scripts in [`scripts/`](scripts/). See [`references/04-python-api.md`](references/04-python-api.md).
 
-5. **Work through the six analysis dimensions.** See [`reference/05-analysis-dimensions.md`](reference/05-analysis-dimensions.md). Every one matters, but on any given kernel only 1–2 will dominate.
+5. **Work through the six analysis dimensions.** See [`references/05-analysis-dimensions.md`](references/05-analysis-dimensions.md). Every one matters, but on any given kernel only 1–2 will dominate.
 
-6. **Match patterns to the diagnosis playbook.** See [`reference/06-diagnosis-playbook.md`](reference/06-diagnosis-playbook.md). It maps NCU signal → likely cause → concrete fix, with example counts for "how big is this".
+6. **Match patterns to the diagnosis playbook.** See [`references/06-diagnosis-playbook.md`](references/06-diagnosis-playbook.md). It maps NCU signal → likely cause → concrete fix, with example counts for "how big is this".
 
-7. **Write the report** at `profile/<run_name>/REPORT.md` with evidence-backed recommendations, ranked by expected impact. See [`reference/07-report-template.md`](reference/07-report-template.md).
+7. **Write the report** at `profile/<run_name>/REPORT.md` with evidence-backed recommendations, ranked by expected impact. See [`references/07-report-template.md`](references/07-report-template.md).
 
 ---
 
@@ -45,38 +45,45 @@ Most under-performing CUDA kernels are under-performing for exactly one reason t
 
 | File | Purpose |
 |---|---|
-| [`reference/00-directory-layout.md`](reference/00-directory-layout.md) | **Read first.** Directory / naming conventions — one run = one subdirectory, no cross-contamination |
-| [`reference/01-workflow.md`](reference/01-workflow.md) | End-to-end checklist from "user request" to "final report" |
-| [`reference/02-harness-guide.md`](reference/02-harness-guide.md) | When and how to build a standalone harness (mandatory for TVM-FFI, PyTorch kernels, JIT-compiled code) |
-| [`reference/03-collection.md`](reference/03-collection.md) | ncu command recipes: full, source-level, PM sampling, custom sections |
-| [`reference/04-python-api.md`](reference/04-python-api.md) | `ncu_report` Python API patterns with copy-pasteable code |
-| [`reference/05-analysis-dimensions.md`](reference/05-analysis-dimensions.md) | Six analysis dimensions: occupancy, balance, stalls, tensor core, timeline, memory |
-| [`reference/06-diagnosis-playbook.md`](reference/06-diagnosis-playbook.md) | Pattern → diagnosis → fix. Merges Blackwell programming principles with NCU signals |
-| [`reference/07-report-template.md`](reference/07-report-template.md) | How to structure the final report |
-| [`reference/08-b200-metric-names.md`](reference/08-b200-metric-names.md) | sm_100 metric names vs older GPUs — many common names are different |
-| [`reference/09-common-issues.md`](reference/09-common-issues.md) | Permissions, PM sampling gaps, TVM-FFI / PyTorch gotchas |
+| [`references/00-directory-layout.md`](references/00-directory-layout.md) | **Read first.** Directory / naming conventions — one run = one subdirectory, no cross-contamination |
+| [`references/01-workflow.md`](references/01-workflow.md) | End-to-end checklist from "user request" to "final report" |
+| [`references/02-harness-guide.md`](references/02-harness-guide.md) | When and how to build a standalone harness (mandatory for TVM-FFI, PyTorch kernels, JIT-compiled code) |
+| [`references/03-collection.md`](references/03-collection.md) | ncu command recipes: full, source-level, PM sampling, custom sections |
+| [`references/04-python-api.md`](references/04-python-api.md) | `ncu_report` Python API patterns with copy-pasteable code |
+| [`references/05-analysis-dimensions.md`](references/05-analysis-dimensions.md) | Six analysis dimensions: occupancy, balance, stalls, tensor core, timeline, memory |
+| [`references/06-diagnosis-playbook.md`](references/06-diagnosis-playbook.md) | Pattern → diagnosis → fix. Merges Blackwell programming principles with NCU signals |
+| [`references/07-report-template.md`](references/07-report-template.md) | How to structure the final report |
+| [`references/08-b200-metric-names.md`](references/08-b200-metric-names.md) | sm_100 metric names vs older GPUs — many common names are different |
+| [`references/09-common-issues.md`](references/09-common-issues.md) | Permissions, PM sampling gaps, TVM-FFI / PyTorch gotchas |
+| [`references/tool-usage.md`](references/tool-usage.md) | How to run scripts and copy harness assets |
+| [`references/blackwell-cuda-programming.md`](references/blackwell-cuda-programming.md) | Blackwell-specific programming principles and checklists |
 
-### Helpers (reusable code)
+### Scripts (executable tools and shared module)
 
 | File | Purpose |
 |---|---|
-| [`helpers/harness_template.cu`](helpers/harness_template.cu) | Standalone harness template — paste your kernel, fill in input allocation, done |
-| [`helpers/safetensors_loader.h`](helpers/safetensors_loader.h) | Header-only safetensors reader (no external deps) for loading real workload tensors |
-| [`helpers/analyze_reports.py`](helpers/analyze_reports.py) | Extract key metrics, produce side-by-side comparisons |
-| [`helpers/extract_stall_hotspots.py`](helpers/extract_stall_hotspots.py) | Per-line stall aggregation via `action.source_info(pc)` |
-| [`helpers/plot_timeline.py`](helpers/plot_timeline.py) | ASCII PM-sampling timeline plotter — makes tail effect visible |
-| [`helpers/list_flashinfer_workloads.py`](helpers/list_flashinfer_workloads.py) | Browse a flashinfer-trace dataset — shape histograms, filter by axis, resolve safetensors paths for specific UUIDs |
-| [`helpers/ncu_utils.py`](helpers/ncu_utils.py) | Shared Python helpers: safe metric access, per-instance extraction, report loading |
+| [`scripts/analyze_reports.py`](scripts/analyze_reports.py) | Extract key metrics, produce side-by-side comparisons |
+| [`scripts/extract_stall_hotspots.py`](scripts/extract_stall_hotspots.py) | Per-line stall aggregation via `action.source_info(pc)` |
+| [`scripts/plot_timeline.py`](scripts/plot_timeline.py) | ASCII PM-sampling timeline plotter — makes tail effect visible |
+| [`scripts/list_flashinfer_workloads.py`](scripts/list_flashinfer_workloads.py) | Browse a flashinfer-trace dataset — shape histograms, filter by axis, resolve safetensors paths for specific UUIDs |
+| [`scripts/ncu_utils.py`](scripts/ncu_utils.py) | Shared Python helpers: safe metric access, per-instance extraction, report loading |
+
+### Assets (code resources for profiling harnesses)
+
+| File | Purpose |
+|---|---|
+| [`assets/harness_template.cu`](assets/harness_template.cu) | Standalone harness template — paste your kernel, fill in input allocation, done |
+| [`assets/safetensors_loader.h`](assets/safetensors_loader.h) | Header-only safetensors reader (no external deps) for loading real workload tensors |
 
 ---
 
 ## Critical lessons (don't skip)
 
-1. **The stock `ncu_profile_skill.md` metric names don't all work on B200.** Names like `smsp__inst_executed_op_global_ld.sum`, `dram__bytes.sum`, `l1tex__average_t_sectors_per_request*.ratio` return `None` on sm_100. Use the sm_100 names in [`reference/08-b200-metric-names.md`](reference/08-b200-metric-names.md) or enumerate via `action.metric_names()`.
+1. **The stock `ncu_profile_skill.md` metric names don't all work on B200.** Names like `smsp__inst_executed_op_global_ld.sum`, `dram__bytes.sum`, `l1tex__average_t_sectors_per_request*.ratio` return `None` on sm_100. Use the sm_100 names in [`references/08-b200-metric-names.md`](references/08-b200-metric-names.md) or enumerate via `action.metric_names()`.
 
 2. **Always compile with `-lineinfo`.** Without it, ncu's source view is blank and you cannot do per-line stall analysis. If you can't add `-lineinfo` to the build system (TVM-FFI, PyTorch inline, JIT), **build a standalone harness** — that's the whole point.
 
-3. **PM sampling is the only way to see tail effects.** Static metrics average over the whole kernel; only the time-series (either `pmsampling:` metrics or the ASCII plotter in `helpers/`) shows the shape of utilization over time.
+3. **PM sampling is the only way to see tail effects.** Static metrics average over the whole kernel; only the time-series (either `pmsampling:` metrics or the ASCII plotter in `scripts/`) shows the shape of utilization over time.
 
 4. **Load-imbalance on variable-length inputs is often the #1 bottleneck.** If the user's workload has sequences of varying length, per-SM active-cycle variance will often dwarf every other effect. Always check the input distribution.
 
@@ -86,6 +93,6 @@ Most under-performing CUDA kernels are under-performing for exactly one reason t
 
 ---
 
-## Related skills
+## Companion reference
 
-- [`blackwell-cuda-programming.md`](blackwell-cuda-programming.md) — Blackwell-specific programming principles and checklists, preserved as a companion reference. Use it when proposing *new* kernel designs; use this skill when diagnosing *existing* kernels.
+- [`references/blackwell-cuda-programming.md`](references/blackwell-cuda-programming.md) — Blackwell-specific programming principles and checklists, preserved as a companion reference. Use it when proposing *new* kernel designs; use this skill when diagnosing *existing* kernels.

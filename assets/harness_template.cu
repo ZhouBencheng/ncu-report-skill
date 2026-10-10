@@ -14,7 +14,7 @@
 //     ./harness --workload <path.safetensors>        # real tensor values
 //     ./harness <shape_arg1> <shape_arg2> ...        # synthetic at specific shape
 //
-// Why it's structured this way: see ../reference/02-harness-guide.md
+// Why it's structured this way: see ../references/02-harness-guide.md
 // ============================================================================
 
 #include <cuda_bf16.h>
