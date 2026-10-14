@@ -156,7 +156,7 @@ ncu handles CUDA Graph launches fine — each captured kernel shows up as a sepa
 
 ### Results jitter between runs
 
-1. **Check the clock.** ncu locks the SM clock at base by default (`--clock-control base`); a run with
+1. **Check the clock.** ncu locks the clock by default (`boost` in ncu 2026.1, `base` before); a run with
    `--clock-control none` and no outer lock profiles at whatever clock the GPU picks. Compare
    `sm__cycles_elapsed.avg.per_second` between the reports, and lock your own clock only as
    [`03-collection.md`](03-collection.md#gpu-clocks) describes.

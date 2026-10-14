@@ -201,12 +201,13 @@ ncu -k "regex:my_kernel" -s 5 -c 3 -o report ./harness
 
 ## GPU clocks
 
-ncu fixes the clock itself: by default (`--clock-control base`) it locks the SM clock at base for every profiled kernel
-and restores it after, so durations and throughputs are comparable between runs, though not with timings taken at boost
-or at another lock. That is usually what you want; no outer lock is needed.
+ncu fixes the clock itself: it locks the GPU clock for every profiled kernel and restores it after, so durations and
+throughputs are comparable between runs. The default is `--clock-control boost` in ncu 2026.1 and `base` in older
+versions (`ncu --help` shows it); on a B300, `base` (~1.07 GHz) made kernels ~1.7x slower than `boost` (~1.9 GHz).
+Name the setting in the command so the report says what it ran at. No outer lock is needed.
 
 To profile at a fixed clock of your own (to match the clock a timing A/B ran at), lock it around the command and pass
-`--clock-control none`; without it, ncu replaces your lock with its base clock:
+`--clock-control none`; without it, ncu replaces your lock with its own:
 
 ```bash
 # check with nvidia-smi -q -d CLOCK; an environment that locks clocks for you replaces these two lines

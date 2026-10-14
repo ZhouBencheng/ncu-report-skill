@@ -45,8 +45,9 @@ Only `ncu` (and the harness it launches) needs a GPU. Building the harness with 
 and every Python helper only read and write files, so they can run on a machine or in a container without one. No
 helper picks a GPU or locks a clock: run `ncu` on the GPU your environment gives you, the way it runs any GPU command.
 
-ncu locks the SM clock at base for every profiled kernel by default (`--clock-control base`), which keeps reports
-comparable. To profile at another fixed clock, lock it outside ncu (e.g. `sudo nvidia-smi -lgc MHZ,MHZ` before,
+ncu locks the GPU clock for every profiled kernel by default, which keeps reports comparable: at boost in ncu 2026.1
+(`--clock-control boost`; older versions default to `base`, which on a B300 runs kernels ~1.7x slower). `ncu --help`
+shows the default. To profile at another fixed clock, lock it outside ncu (e.g. `sudo nvidia-smi -lgc MHZ,MHZ` before,
 `sudo nvidia-smi -rgc` after) and pass `--clock-control none`, or ncu replaces your lock with its own. See
 [`reference/03-collection.md`](reference/03-collection.md#gpu-clocks).
 
