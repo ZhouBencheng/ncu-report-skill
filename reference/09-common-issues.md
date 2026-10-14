@@ -22,6 +22,10 @@ sudo update-initramfs -u
 # reboot, then regular user can run ncu
 ```
 
+**C) In a container without `sudo`:** the container needs counter access from whoever starts it (the host driver
+setting above, or the container started with `--cap-add SYS_ADMIN`). Report the error to them instead of working
+around it.
+
 ### `Could not deploy stock section files to "/home/USER/Documents/NVIDIA Nsight Compute/..."`
 
 Set `HOME` to a writable directory:
@@ -152,12 +156,10 @@ ncu handles CUDA Graph launches fine — each captured kernel shows up as a sepa
 
 ### Results jitter between runs
 
-1. **Lock GPU clocks:**
-   ```bash
-   sudo nvidia-smi -lgc <boost_clock_mhz>    # check with nvidia-smi -q -d CLOCK
-   # profile
-   sudo nvidia-smi -rgc                      # unlock
-   ```
+1. **Check the clock.** ncu locks the SM clock at base by default (`--clock-control base`); a run with
+   `--clock-control none` and no outer lock profiles at whatever clock the GPU picks. Compare
+   `sm__cycles_elapsed.avg.per_second` between the reports, and lock your own clock only as
+   [`03-collection.md`](03-collection.md#gpu-clocks) describes.
 2. **Enable persistent mode** (avoids driver unload between invocations):
    ```bash
    sudo nvidia-smi -pm 1

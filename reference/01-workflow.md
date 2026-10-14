@@ -38,6 +38,9 @@ If any of 1-4 are unclear, **ask the user** before profiling. Profiling the wron
 
 ## Phase 1 — Environment check
 
+Steps 2 and 5, and every later `ncu` collection, need the GPU; run them where your environment runs GPU commands
+(see "Where the GPU is" in [`../SKILL.md`](../SKILL.md)).
+
 ```bash
 # 1. ncu CLI is available
 ncu --version   # expect: NVIDIA (R) Nsight Compute Command Line Profiler 2026.1.x or newer

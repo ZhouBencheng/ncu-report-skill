@@ -39,6 +39,19 @@ Most under-performing CUDA kernels are under-performing for exactly one reason t
 
 ---
 
+## Where the GPU is
+
+Only `ncu` (and the harness it launches) needs a GPU. Building the harness with an explicit `-gencode`, `ncu --import`,
+and every Python helper only read and write files, so they can run on a machine or in a container without one. No
+helper picks a GPU or locks a clock: run `ncu` on the GPU your environment gives you, the way it runs any GPU command.
+
+ncu locks the SM clock at base for every profiled kernel by default (`--clock-control base`), which keeps reports
+comparable. To profile at another fixed clock, lock it outside ncu (e.g. `sudo nvidia-smi -lgc MHZ,MHZ` before,
+`sudo nvidia-smi -rgc` after) and pass `--clock-control none`, or ncu replaces your lock with its own. See
+[`reference/03-collection.md`](reference/03-collection.md#gpu-clocks).
+
+---
+
 ## File index
 
 ### Reference docs (read these when you need details)

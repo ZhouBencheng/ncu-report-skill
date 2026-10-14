@@ -11,6 +11,8 @@ This document lists the exact `ncu` commands you should run, in what order, and 
 - Writable `$HOME` so ncu can cache section files.
 - Kernel name known (check with `cuobjdump --dump-function-names your_binary` if unsure).
 
+Every `ncu` command below that runs a binary needs the GPU; `ncu --import` does not.
+
 Quick permission test:
 ```bash
 ncu --section SpeedOfLight -k "regex:YOUR_KERNEL_NAME" -c 1 ./harness [args]
@@ -197,20 +199,23 @@ ncu -k "regex:my_kernel" -s 5 -c 3 -o report ./harness
 
 ---
 
-## GPU frequency locking (for reproducibility)
+## GPU clocks
+
+ncu fixes the clock itself: by default (`--clock-control base`) it locks the SM clock at base for every profiled kernel
+and restores it after, so durations and throughputs are comparable between runs, though not with timings taken at boost
+or at another lock. That is usually what you want; no outer lock is needed.
+
+To profile at a fixed clock of your own (to match the clock a timing A/B ran at), lock it around the command and pass
+`--clock-control none`; without it, ncu replaces your lock with its base clock:
 
 ```bash
-# Check current clocks
-nvidia-smi -q -d CLOCK
-
-# Lock to boost frequency (sudo required)
-sudo nvidia-smi -lgc <boost_clock_mhz>
-
-# Unlock when done
+# check with nvidia-smi -q -d CLOCK; an environment that locks clocks for you replaces these two lines
+sudo nvidia-smi -lgc <mhz>,<mhz>
+ncu --clock-control none --set full ... ./harness [args]
 sudo nvidia-smi -rgc
 ```
 
-For B200 this is usually unnecessary — the GPU boosts to steady-state during profiling because ncu replays the kernel 45+ times. If your results are jittery between runs, lock the clock.
+Read the clock a report ran at from `sm__cycles_elapsed.avg.per_second`, and give it in the report.
 
 ---
 
