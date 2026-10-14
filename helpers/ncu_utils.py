@@ -567,8 +567,9 @@ def inline_chains(action, binary):
             _disassembly[cubin] = _run(["nvdisasm", "-gi", str(cubin)])
         insts, chain, in_func, block = {}, [], False, False
         for line in _disassembly[cubin].splitlines():
-            if "\t.section\t.text." in line:
-                in_func = line.split(".text.", 1)[1].split(",")[0] == mangled
+            if line.startswith("\t.section\t"):  # any section ends the kernel's code
+                in_func = (line.startswith("\t.section\t.text.")
+                           and line.split(".text.", 1)[1].split(",")[0] == mangled)
                 chain, block = [], False
                 continue
             if not in_func:

@@ -56,6 +56,12 @@ This warning is harmless but noisy. ncu falls back to reading from the CUDA inst
 
 ---
 
+## ncu hangs and profiles nothing
+
+`ncu ... uv run python app.py` never profiles a kernel and never returns: ncu injects into the launcher, and the program under it does not get through. Put ncu inside the launcher (`uv run ncu ... python app.py`) or give it the interpreter directly (`ncu ... .venv/bin/python app.py`). Bound first runs with `timeout` so a stuck one does not use up a GPU job.
+
+---
+
 ## `-k "regex:..."` matches nothing
 
 1. **Match the function name.** `-k` matches the kernel's function name by default (`--kernel-name-base function`): `my_kernel` for `void my_kernel<(int)8, (int)256>(float *)`. To tell template instances apart, add `--kernel-name-base demangled` and match the full name. List the names:
@@ -80,7 +86,7 @@ For JIT / framework-integrated builds:
 - **TVM-FFI**: hard to inject `-lineinfo`. Easiest fix: build a standalone harness (see `02-harness-guide.md`).
 - **PyTorch `torch.utils.cpp_extension.load`**: pass `extra_cuda_cflags=["-lineinfo"]`. But also switch out of `-O3 -G` to avoid heavy debug instrumentation.
 - **CUTLASS**: pass `-lineinfo` via `CMAKE_CUDA_FLAGS`.
-- **Triton**: harder — Triton's JIT codegen ignores user nvcc flags. To do source-level on Triton, dump the generated PTX, rebuild as a standalone, and profile.
+- **Triton** (3.x, including `torch.compile`'s Inductor kernels): compiles with line info already — the source view shows the Python lines. Profile in place; to check, run `nvdisasm -g` on the kernel's cubin from Triton's cache (`$TRITON_CACHE_DIR`, by default under `~/.triton/cache`).
 
 ---
 

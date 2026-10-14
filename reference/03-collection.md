@@ -10,6 +10,7 @@ This document lists the exact `ncu` commands you should run, in what order, and 
 - `ncu` available on PATH.
 - Writable `$HOME` so ncu can cache section files.
 - Kernel name known (`cuobjdump -res-usage <binary> | grep Function`, or the survey below).
+- ncu launches the program itself, not a launcher around it. `ncu ... uv run python app.py` hangs (no kernel is ever profiled, in ncu 2026.1 and 2026.3 alike): put ncu inside the launcher, `uv run ncu ... python app.py`, or give ncu the interpreter, `ncu ... .venv/bin/python app.py`. The same goes for other launchers that start the interpreter as a child process.
 
 Every `ncu` command below that runs a program needs the GPU; `ncu --import` does not.
 
@@ -110,8 +111,9 @@ OPT   Est. Speedup: <pct>%
 # Full metric table as CSV — one row per kernel launch, one column per metric
 ncu --import "$PROFILE_RUN_DIR/reports/full_<tag>.ncu-rep" --page raw --csv > "$PROFILE_RUN_DIR/analysis/raw_<tag>.csv"
 
-# Source page as text (CUDA source with per-line counters; --print-source sass for SASS)
-ncu --import "$PROFILE_RUN_DIR/reports/full_<tag>.ncu-rep" --page source --print-source cuda > "$PROFILE_RUN_DIR/analysis/source_<tag>.txt"
+# Source page as text: CUDA lines interleaved with their SASS and its per-instruction counters
+# (--print-source cuda alone prints the source without counters)
+ncu --import "$PROFILE_RUN_DIR/reports/full_<tag>.ncu-rep" --page source --print-source cuda,sass > "$PROFILE_RUN_DIR/analysis/source_<tag>.txt"
 ```
 
 Most of the time you don't need these — the Python API (`04-python-api.md`) is easier. But CSV is handy for quick `grep`/`awk` one-liners.

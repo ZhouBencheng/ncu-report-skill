@@ -8,8 +8,10 @@ Requires:
 
 Produces in `<run-dir>/analysis/`, per profiled kernel:
     stall_hotspots_<tag>.txt — top lines ranked by total stall samples,
-                               with per-stall-type breakdown, plus per-stall
-                               top lines.
+                               with per-stall-type breakdown, per-stall top
+                               lines, and the lines that executed the most
+                               instructions (the evidence for an issue-bound
+                               kernel).
 
 ncu maps most PCs to their innermost inlined frame, so in CUTLASS/CuTe-style code
 most samples land on library header lines. `--binary` (the executable, .so or
@@ -88,6 +90,14 @@ def collect_per_pc(action):
     return per_pc
 
 
+def _source_line(action, pc):
+    try:
+        si = action.source_info(pc)
+        return ("?", 0) if si is None else (si.file_name(), si.line())
+    except Exception:
+        return ("?", 0)
+
+
 def aggregate_by_source_line(action, per_pc):
     per_line = defaultdict(lambda: defaultdict(int))
     for pc, stalls in per_pc.items():
@@ -113,6 +123,32 @@ def aggregate_by_kernel_line(per_pc, chains):
         for sn, v in stalls.items():
             per_line[key][sn] += v
     return per_line
+
+
+def executed_by_line(action, key_of_pc):
+    """Warp-level instructions executed per line (per-PC `inst_executed`), {key: count}."""
+    out = defaultdict(int)
+    try:
+        m = action["inst_executed"]
+        n = m.num_instances()
+    except Exception:
+        return out
+    if n == 0 or not m.has_correlation_ids():
+        return out
+    cor = m.correlation_ids()
+    for i in range(n):
+        out[key_of_pc(cor.as_uint64(i))] += int(metric_value_at(m, i) or 0)
+    return out
+
+
+def _write_executed(f, executed, top_n):
+    total = sum(executed.values())
+    if not total:
+        return
+    f.write(f"\n\n===== Executed instructions per line (inst_executed, {total} warp-level) =====\n")
+    for (fn, ln), v in sorted(executed.items(), key=lambda x: -x[1])[:top_n]:
+        short = Path(str(fn)).name if fn and fn != "?" else "?"
+        f.write(f"  {v:>12}  {100 * v / total:5.1f}%  {short}:{ln}\n")
 
 
 def short_stall_name(full):
@@ -150,7 +186,8 @@ def _write_ranking(f, per_line, top_n):
             f.write(f"  {v:>8}  {short}:{ln}\n")
 
 
-def write_report(per_line, out_path, tag, kernel, top_n=30, kernel_lines=None, alignment=None):
+def write_report(per_line, out_path, tag, kernel, top_n=30, kernel_lines=None, alignment=None,
+                 executed=None, kernel_executed=None):
     with open(out_path, "w") as f:
         f.write(f"===== Stall hotspots for {tag} =====\nKernel: {kernel}\n")
         if kernel_lines is not None:
@@ -158,8 +195,10 @@ def write_report(per_line, out_path, tag, kernel, top_n=30, kernel_lines=None, a
             f.write(f"\n===== By line in the kernel function (outermost inline frame, from --binary; "
                     f"SASS of {checked - mismatched}/{checked} sampled PCs matched the report) =====\n")
             _write_ranking(f, kernel_lines, top_n)
+            _write_executed(f, kernel_executed or {}, top_n)
             f.write("\n\n===== By innermost source line (ncu's own attribution) =====\n")
         _write_ranking(f, per_line, top_n)
+        _write_executed(f, executed or {}, top_n)
 
 
 def main():
@@ -218,8 +257,12 @@ def main():
                               f"is {args.binary} the binary that was profiled?", file=sys.stderr)
                     kernel_lines = aggregate_by_kernel_line(per_pc, chains)
                     alignment = (checked, mismatched)
+            executed = executed_by_line(action, lambda pc: _source_line(action, pc))
+            kernel_executed = (executed_by_line(action, lambda pc: (chains.get(pc) or [("?", 0)])[-1])
+                               if kernel_lines is not None else None)
             out = analysis_dir / f"stall_hotspots_{t}.txt"
-            write_report(per_line, out, t, kernel_name(action), args.top, kernel_lines, alignment)
+            write_report(per_line, out, t, kernel_name(action), args.top, kernel_lines, alignment,
+                         executed, kernel_executed)
             print(f"[{t}] -> {out} ({len(per_line)} distinct lines)")
 
 

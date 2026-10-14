@@ -248,7 +248,7 @@ l1tex__t_sector_pipe_lsu_mem_global_op_st_hit_rate.pct
 # Sectors per request (coalescing quality)
 l1tex__t_sectors_pipe_lsu_mem_global_op_ld.sum              # total sectors
 l1tex__t_requests_pipe_lsu_mem_global_op_ld.sum             # total requests
-# Compute sectors/request yourself — ideal is 4 (128B aligned load)
+# Compute sectors/request yourself — the ideal is (bytes per thread × 32) / 32-byte sectors per warp request: 4 for 4-byte loads, 8 for 8-byte, 16 for 16-byte
 
 # Store efficiency
 smsp__sass_average_data_bytes_per_sector_mem_global_op_st.ratio  # useful bytes/sector, max 32
@@ -269,8 +269,8 @@ smsp__sass_inst_executed_op_shared.sum                     # 0 if no shared memo
 - **`... << 10%` but kernel is slow**: *not* bandwidth-bound. It's latency-bound (Dimension 3) or compute-bound (check `sm__throughput`).
 - **`l1tex__t_sector_hit_rate.pct > 90%`**: good data locality, L1 is absorbing the reuse.
 - **`lts__t_sector_hit_rate.pct < 50%`**: L2 is being blown through, reads fall to DRAM.
-- **Sectors/request = 4.0 (ideal 128B fully-coalesced) to 5.0**: small coalescing issue but acceptable.
-- **Sectors/request > 8.0**: serious non-coalesced access — big optimization opportunity.
+- **Sectors/request at the ideal for the load width** (4 for 4-byte loads, 8 for 8-byte, 16 for 16-byte; the SASS says which: `LDG.E`, `LDG.E.64`, `LDG.E.128`) to ~1.25× it: coalesced, or a small issue.
+- **Sectors/request at 2× the ideal or more**: serious non-coalesced access — big optimization opportunity.
 - **`smsp__sass_average_data_bytes_per_sector_mem_global_op_st.ratio < 16`**: stores are using less than half of each 32B sector. Usually means only a subset of warp lanes write (e.g. `if (lane_id < 4)` patterns).
 - **`smsp__sass_inst_executed_op_local_ld.sum > 0`**: **register spill** — very bad, local memory is DRAM-backed. Reduce register pressure with `__launch_bounds__` or kernel splitting.
 - **`smsp__sass_inst_executed_op_shared.sum == 0`**: kernel uses no shared memory. Fine for element-wise kernels; often a missed optimization for data-reuse-heavy kernels.

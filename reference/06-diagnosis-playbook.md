@@ -76,7 +76,7 @@ Most kernels will match 2-4 patterns simultaneously. **Rank them by magnitude** 
 ## Pattern C — Uncoalesced global loads
 
 **Signals:**
-- `l1tex__t_sectors_pipe_lsu_mem_global_op_ld.sum / l1tex__t_requests_pipe_lsu_mem_global_op_ld.sum > 5` (ideal is 4).
+- `l1tex__t_sectors_pipe_lsu_mem_global_op_ld.sum / l1tex__t_requests_pipe_lsu_mem_global_op_ld.sum` well above the ideal for the load width (4 for 4-byte loads, 8 for 8-byte `LDG.E.64`, 16 for 16-byte `LDG.E.128`).
 - NCU rule: *"uncoalesced global accesses resulting in N excessive sectors (X% of the total)"*.
 - NCU rule: *"On average, only Y of the 32 bytes transmitted per sector are utilized"*.
 - Primary stall reason on the offending load line is `long_scoreboard`.

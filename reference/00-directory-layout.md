@@ -35,7 +35,7 @@ Rationale:
 
 ## Run directory naming
 
-Use descriptive, short, kebab-case names. Include **what** was profiled and **when/why**, not how.
+Use descriptive, short, snake_case names. Include **what** was profiled and **when/why**, not how.
 
 Good:
 ```

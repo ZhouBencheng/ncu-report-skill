@@ -6,7 +6,6 @@ First check whether you need one: if the code you would profile already carries 
 
 - **TVM-FFI / FlashInfer solutions** — compiled via `tvm_ffi.cpp.build`, hard to add `-lineinfo`.
 - **PyTorch inline-compiled CUDA** — compiled via `torch.utils.cpp_extension.load`, same problem.
-- **Triton kernels** — Triton's JIT makes it hard to pin a specific compiled artifact.
 - **CUTLASS JIT** — layered build system.
 - **A larger binary** where the kernel of interest is buried under initialization, data loading, or networking code that makes each profile run take minutes.
 
@@ -50,7 +49,7 @@ ncu --profile-from-start off --set full --import-source yes \
     -k "regex:KERNEL" -c 1 -o "$PROFILE_RUN_DIR/reports/full_<tag>.ncu-rep" python3 "$PROFILE_RUN_DIR/harness/driver.py"
 ```
 
-Keep the driver in the run's `harness/`. Without the profiler range, `-k "regex:KERNEL" -s <warm-up launches> -c 1` skips the warm-up launches instead.
+In a project that runs Python through a launcher (`uv run`, ...), put ncu inside it: `uv run ncu ... python driver.py` (`ncu ... uv run python driver.py` hangs; `03-collection.md`). Keep the driver in the run's `harness/`. Without the profiler range, `-k "regex:KERNEL" -s <warm-up launches> -c 1` skips the warm-up launches instead.
 
 ---
 
