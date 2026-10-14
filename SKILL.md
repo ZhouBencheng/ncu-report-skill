@@ -1,11 +1,11 @@
 ---
 name: ncu-report-skill
-description: Profile CUDA kernels with Nsight Compute (ncu 2026.3) on Blackwell (B200 / B300, sm_100 / sm_103) and other NVIDIA GPUs. Use when the user asks to profile a kernel, analyze its performance, diagnose bottlenecks, read an ncu report, or write an optimization plan — including variants in Chinese ("profile 一下", "为什么慢", "ncu 报告").
+description: Use before deciding how to optimize a CUDA kernel, when a kernel is slower than expected, and whenever you are about to run Nsight Compute (ncu) or read its output — instead of guessing at the bottleneck, writing your own profiling script, or reading ncu's console tables by eye. One ncu collection, then helpers that extract key metrics, NCU's rule results, per-line stalls (inlined CUTLASS/CuTe/Triton code included) and PM timelines, and a playbook from signals to fixes. Also when a user asks to profile a kernel, read an ncu report or write an optimization plan ("profile 一下", "为什么慢", "ncu 报告"). Written for ncu 2026.3 on Blackwell (B200 / B300) and other NVIDIA GPUs.
 ---
 
 # Skill: CUDA Kernel Profiling (Nsight Compute)
 
-**When to use:** user asks to profile a CUDA kernel, analyze its performance, find its bottlenecks, or write an optimization plan based on Nsight Compute data. Triggers include: "profile X", "为什么这个 kernel 慢", "ncu report 说...", "下一步怎么优化", "帮我看一下这份 ncu 报告".
+**When to use:** before choosing what to optimize in a CUDA kernel, when a kernel is slower than its budget or baseline, after a change whose effect you do not understand, and every time you are about to run `ncu` or read a report — so the bottleneck comes from measurements, not guesses. Also when someone asks to profile a kernel, find its bottlenecks, read an ncu report or write an optimization plan ("profile X", "为什么这个 kernel 慢", "ncu report 说...", "下一步怎么优化", "帮我看一下这份 ncu 报告").
 
 **Written for:** Nsight Compute 2026.3.1, the newest release (it also reads reports of older versions), on Blackwell — B200 (sm_100) and B300 (sm_103), 148 SMs each. A CUDA toolkit bundles the ncu of its release (CUDA 13.2: 2026.1.1); newer ones are separate installs (NVIDIA's CUDA package repositories carry `nsight-compute-<version>`, and the toolkit's `ncu` launcher runs the newest installed). Most advice is generic; GPU- or version-specific notes say so. ncu's flags, sets and metric names change between releases: `ncu --version`, `ncu --help`, `ncu --list-sets` and `ncu --list-sections` are the authority when something here does not match what you have.
 
