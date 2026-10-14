@@ -2,7 +2,7 @@
 """Aggregate per-PC stall samples into per-source-line hotspots.
 
 Requires:
-    - a .ncu-rep with the SourceCounters section (`--set full` has it, or
+    - a report (.ncu-rep / .ncu-repz) with the SourceCounters section (`--set full` has it, or
       `--section SourceCounters` alone)
     - kernel compiled with `-lineinfo` (or `--generate-line-info`)
 
@@ -11,7 +11,7 @@ Produces in `<run-dir>/analysis/`, per profiled kernel:
                                with per-stall-type breakdown, plus per-stall
                                top lines.
 
-ncu maps a PC only to its innermost inlined frame, so in CUTLASS/CuTe-style code
+ncu maps most PCs to their innermost inlined frame, so in CUTLASS/CuTe-style code
 most samples land on library header lines. `--binary` (the executable, .so or
 cubin that was profiled) adds a ranking by the line in the kernel function itself,
 from `nvdisasm -gi`.
@@ -34,7 +34,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 from ncu_utils import (  # noqa: E402
-    action_tags, inline_chains, kernel_name, metric_value_at, select_actions,
+    BinaryError, action_tags, inline_chains, kernel_name, metric_value_at, select_actions,
 )
 
 
@@ -170,7 +170,7 @@ def main():
     ap.add_argument("--tag", type=str, action="append", required=True)
     ap.add_argument("--top", type=int, default=30)
     ap.add_argument("--kernel", type=str, default=None,
-                    help="Regex on the demangled kernel name: keep only matching kernels.")
+                    help="Regex on the kernel's function or demangled name: keep only matching kernels.")
     ap.add_argument("--binary", type=Path, default=None,
                     help="The executable, .so or cubin that was profiled: also rank by the "
                          "kernel function's own lines (needs cuobjdump and nvdisasm).")
@@ -187,6 +187,9 @@ def main():
             print(f"[skip] {rep} not found", file=sys.stderr)
             continue
         _report, acts = select_actions(rep, args.kernel)
+        if not acts:
+            print(f"[skip] {rep}: no kernel matches {args.kernel!r}", file=sys.stderr)
+            continue
         for action, t in zip(acts, action_tags(tag, acts)):
             per_pc = collect_per_pc(action)
             if not per_pc:
@@ -199,14 +202,20 @@ def main():
                       f"-lineinfo); see 02-harness-guide.md", file=sys.stderr)
             kernel_lines = alignment = None
             if args.binary:
-                chains, checked, mismatched = inline_chains(action, args.binary)
-                if not chains:
+                try:
+                    chains, checked, mismatched = inline_chains(action, args.binary)
+                except BinaryError as e:
+                    print(f"[{t}] --binary: {e}", file=sys.stderr)
+                    chains = None
+                if chains is None:
+                    pass
+                elif not chains:
                     print(f"[{t}] {args.binary} holds no SASS for this kernel", file=sys.stderr)
                 else:
                     if mismatched:
-                        print(f"[{t}] warning: SASS of {mismatched}/{checked} sampled PCs differs "
-                              f"from the report: is {args.binary} the binary that was profiled?",
-                              file=sys.stderr)
+                        print(f"[{t}] warning: SASS of {mismatched}/{checked} sampled PCs differs from "
+                              f"the report or lies outside the kernel's own code (a non-inlined call): "
+                              f"is {args.binary} the binary that was profiled?", file=sys.stderr)
                     kernel_lines = aggregate_by_kernel_line(per_pc, chains)
                     alignment = (checked, mismatched)
             out = analysis_dir / f"stall_hotspots_{t}.txt"

@@ -9,7 +9,7 @@ This is the complete checklist from "user asks to profile" to "final report". Ev
 **Always start here.** See [`00-directory-layout.md`](00-directory-layout.md) for the full convention.
 
 ```bash
-# <profile_root>: the directory your project keeps profiling artifacts in, else profile/ at the repo root
+# <profile_root>: the directory your project keeps profiling artifacts in (else one you create, named in the report)
 export PROFILE_RUN_DIR=<profile_root>/<descriptive_run_name>        # e.g. <kernel>_v1_baseline
 mkdir -p "$PROFILE_RUN_DIR"/{harness,reports,analysis}
 ```
@@ -26,7 +26,7 @@ Every artifact produced in subsequent phases is written **only** under `$PROFILE
 
 Before typing any commands, answer these in your head (or in a short note to the user):
 
-1. **What kernel(s) am I profiling?** Get the exact kernel name or regex. Kernels are often templated (`foo_kernel<8, 256>`) and ncu's `-k "regex:..."` needs to match the *demangled* name.
+1. **What kernel(s) am I profiling?** Get the exact kernel name or regex. Kernels are often templated (`foo_kernel<8, 256>`); ncu's `-k "regex:..."` matches the function name (`foo_kernel`) by default, and the full demangled name with `--kernel-name-base demangled`.
 2. **Which workload / input shape?** If the kernel takes variable-sized inputs, pick a **specific** real workload — don't invent shapes. If the user has multiple representative shapes, profile the hottest one first; profile others only if the first reveals nothing.
 3. **Which dispatch path?** Many production kernels branch on input shape or other runtime values to pick different grid configs or template instantiations. Profile each *active* dispatch path separately — treating them as one kernel will average out the real patterns.
 4. **What question am I answering?** "Why is this slow?" is too vague. Better: "At shape X, is the kernel latency-bound or bandwidth-bound?" or "We spent 2 weeks on optimization Y — did it actually help?"
@@ -42,7 +42,7 @@ Steps 2 and 5, and every later `ncu` collection, need the GPU; run them where yo
 
 ```bash
 # 1. ncu CLI is available
-ncu --version   # this skill is written against Nsight Compute 2026.1
+ncu --version   # this skill is written against Nsight Compute 2026.3 (CUDA 13.2 bundles 2026.1.1)
 
 # 2. GPU is visible, and which one (the compute capability picks the -arch, 02-harness-guide.md)
 nvidia-smi --query-gpu=name,compute_cap,driver_version --format=csv
@@ -83,14 +83,14 @@ Either way, **the kernel must carry line info**. Without it, source-level analys
 One `ncu` invocation per (kernel, dispatch path, representative workload) — **outputs go under `$PROFILE_RUN_DIR/reports/`**. Details in [`03-collection.md`](03-collection.md).
 
 ```bash
-ncu --set full --section PmSampling_WarpStates --import-source yes \
+ncu --set full --import-source yes \
     -k "regex:YOUR_KERNEL_NAME" \
     -c 1 \
-    -o "$PROFILE_RUN_DIR/reports/full_<tag>" \
+    -o "$PROFILE_RUN_DIR/reports/full_<tag>.ncu-rep" \
     "$PROFILE_RUN_DIR/harness/your_harness" [args]
 ```
 
-In ncu 2026.1 `--set full` holds every section the helpers read, including the per-PC stall samples (SourceCounters) and the PM-sampling timelines; `PmSampling_WarpStates` adds the stall-reason timelines. A `--set full` run replays the kernel about 50 times: seconds for a short kernel, minutes for a long one. Plan your time budget.
+`--set full` holds every section the helpers read, including the per-PC stall samples and timed warp samples (SourceCounters) and the PM-sampling timelines. Name the output with its `.ncu-rep` extension: without one, ncu 2026.3 writes `.ncu-repz`. A `--set full` run replays the kernel about 50 times: seconds for a short kernel, minutes for a long one. Plan your time budget.
 
 ---
 
@@ -125,7 +125,7 @@ Work through the six analysis dimensions — see [`05-analysis-dimensions.md`](0
 5. **SM utilization timeline** — flat high, flat low, periodic waves, gradual tail?
 6. **Memory access pattern** — sectors/request, L1/L2 hit rates, DRAM throughput, register spill.
 
-For each dimension, write down the observed signal *and the specific metric value* that produced it. "Kernel is memory bound" is useless; something like "`dram__bytes_read.sum.pct_of_peak_sustained_elapsed = X%` (well below peak) shows the kernel is *not* DRAM-bandwidth-bound — the `long_scoreboard` stall rate of Y% says it's latency-bound on L1" is diagnosis. Fill in X and Y from your own report.
+For each dimension, write down the observed signal *and the specific metric value* that produced it. "Kernel is memory bound" is useless; something like "`gpu__dram_throughput.avg.pct_of_peak_sustained_elapsed = X%` (well below peak) shows the kernel is *not* DRAM-bandwidth-bound — the `long_scoreboard` stall rate of Y% says it's latency-bound on L1" is diagnosis. Fill in X and Y from your own report.
 
 Then consult [`06-diagnosis-playbook.md`](06-diagnosis-playbook.md) which maps observed patterns to likely causes and concrete fixes.
 
@@ -138,7 +138,7 @@ Structure described in [`07-report-template.md`](07-report-template.md). Key ele
 1. **Setup section**: exactly how you profiled (harness path, workloads, ncu commands, metric-name caveats). Required for reproducibility.
 2. **Headline numbers**: duration, SM throughput, DRAM throughput, occupancy, tensor core usage. A table on the first page.
 3. **Per-dimension analysis** with evidence (metric values + NCU rule text).
-4. **Optimization directions** ranked by expected impact (use NCU's `Est. Speedup: X%` when available — these are surprisingly accurate).
+4. **Optimization directions** ranked by expected impact (use NCU's `Est. Speedup: X%` when available, after checking each against the counters it rests on — some are far off).
 5. **Confidence & caveats**.
 
 Keep the report short enough that a busy reader can see the top 3 findings in 30 seconds. Put deep detail in the artifacts, not the prose.

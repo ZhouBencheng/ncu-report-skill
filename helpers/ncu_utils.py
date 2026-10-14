@@ -1,4 +1,4 @@
-"""Shared helpers for parsing Nsight Compute reports (written against ncu 2026.1).
+"""Shared helpers for parsing Nsight Compute reports (written against ncu 2026.3, reading 2026.1 reports too).
 
 Usage:
     from ncu_utils import load_report, select_actions, safe, dump_all_metrics
@@ -67,7 +67,7 @@ def actions(report):
 
 
 def load_report(path):
-    """Load a .ncu-rep file and return (report, first action).
+    """Load a report (.ncu-rep, or 2026.3's .ncu-repz) and return (report, first action).
 
     Keep the report alive while using the action.
     """
@@ -82,12 +82,13 @@ def load_action(path):
 
 
 def select_actions(path, kernel=None):
-    """(report, [actions]) of a report, keeping those whose function name matches `kernel`."""
+    """(report, [actions]) of a report, keeping those whose function or demangled name matches `kernel`."""
     r = ncu_report.load_report(str(path))
     acts = actions(r)
     if kernel:
         pat = re.compile(kernel)
-        acts = [a for a in acts if pat.search(kernel_name(a))]
+        acts = [a for a in acts
+                if pat.search(kernel_name(a, "function")) or pat.search(kernel_name(a))]
     return r, acts
 
 
@@ -241,7 +242,7 @@ def pc_to_source_line(action, pc):
 
 # --- Curated metric sets -----------------------------------------------------
 #
-# Every name below is collected by `ncu --set full` (ncu 2026.1) on Blackwell
+# Every name below is collected by `ncu --set full` (ncu 2026.1 and 2026.3) on Blackwell
 # (sm_100 / sm_103). For a fuller list and rationale see
 # ../reference/08-metric-names.md. Other GPU generations and future ncu releases
 # may need alternate names: verify with action.metric_names() if one is None.
@@ -299,6 +300,9 @@ KEY_METRICS = [
     "sm__pipe_tensor_cycles_active.avg.pct_of_peak_sustained_active",
     "sm__pipe_tensor_cycles_active.avg.pct_of_peak_sustained_elapsed",
     "sm__ops_path_tensor_op_hmma_src_bf16_dst_fp32_sparsity_off.avg",
+    "sm__ops_path_tensor_op_utchmma_src_bf16_dst_fp32_sparsity_off.avg.pct_of_peak_sustained_elapsed",
+    "sm__mem_tensor_cycles_active.avg.pct_of_peak_sustained_elapsed",
+    "smsp__sass_inst_executed_op_utcmma.sum",
     # DRAM
     "gpu__dram_throughput.avg.pct_of_peak_sustained_elapsed",   # reads + writes
     "dram__bytes_read.sum",
@@ -411,9 +415,10 @@ def rule_speedups(action):
 def pm_series_names(action):
     """Names of the PM-sampling time series in a report, sorted.
 
-    ncu 2026.1 names them `pmsampling:<metric>` (PmSampling_WarpStates section) and
-    `<UNIT>.<group>.<metric>` (PmSampling section, e.g.
-    `TPC.TriageCompute.sm__inst_executed_realtime.avg.per_cycle_elapsed`).
+    The PmSampling section names them `<UNIT>.<group>.<metric>` (e.g.
+    `TPC.TriageCompute.sm__inst_executed_realtime.avg.per_cycle_elapsed`); reports of ncu
+    before 2026.3 may also have `pmsampling:smsp__warps_issue_stalled_*` (the
+    PmSampling_WarpStates section, which 2026.3 removed).
     """
     pat = re.compile(r"^(pmsampling:|[A-Z][A-Z0-9_]*\.\w+\.)")
     out = []
@@ -428,12 +433,19 @@ def pm_series_names(action):
 
 
 def pm_series(action, name):
-    """(timestamps_ns, values) of one PM-sampling series, or None."""
+    """(timestamps_ns, values) of one PM-sampling series, or None.
+
+    With ncu_report 2026.3+ the series is aligned to the workload's timestamps
+    (`action.timelines().aligned_metric`, context-switch filtered), else it is raw.
+    """
     try:
         m = action[name]
-        n = m.num_instances()
     except Exception:
         return None
+    timelines = action.timelines() if hasattr(action, "timelines") else None
+    if timelines is not None:
+        m = timelines.aligned_metric(m) or m
+    n = m.num_instances()
     if n < 2:
         return None
     vals = [metric_value_at(m, i) for i in range(n)]
@@ -442,6 +454,33 @@ def pm_series(action, name):
         cor = m.correlation_ids()
         ts = [cor.as_uint64(i) for i in range(n)]
     return ts, vals
+
+
+def stall_reason_names():
+    """ncu_report's StallReason codes -> names (long_scoreboard, wait, ...)."""
+    return {getattr(ncu_report, k): k[len("StallReason_"):].lower()
+            for k in dir(ncu_report) if k.startswith("StallReason_")}
+
+
+def warp_state_timeline(action, buckets):
+    """Stall reasons over the kernel's run, from its timed warp samples (SourceCounters).
+
+    Returns (span_ns, {reason: [share of the samples in each time bucket]}), or None
+    when the report has no timed warp samples.
+    """
+    samples = action.timed_warp_samples()
+    if not samples:
+        return None
+    t0 = min(s["timestamp"] for s in samples)
+    span = max(s["timestamp"] for s in samples) - t0 or 1
+    names = stall_reason_names()
+    counts, totals = {}, [0] * buckets
+    for s in samples:
+        b = min(buckets - 1, (s["timestamp"] - t0) * buckets // span)
+        totals[b] += 1
+        reason = names.get(s["stall_reason"], str(s["stall_reason"]))
+        counts.setdefault(reason, [0] * buckets)[b] += 1
+    return span, {r: [c / t if t else 0.0 for c, t in zip(cs, totals)] for r, cs in counts.items()}
 
 
 # --- Inlined source lines (for CUTLASS/CuTe-style kernels) ---------------------
@@ -457,63 +496,101 @@ def _opcode(sass):
     return words[0].split(".")[0] if words else ""
 
 
+class BinaryError(Exception):
+    """The binary given for inline chains cannot be read (missing, or no device code)."""
+
+
+_extracted = {}    # (binary, arch) -> cubin paths
+_disassembly = {}  # cubin path -> nvdisasm -gi text
+
+
+def _run(cmd, **kw):
+    import subprocess
+    r = subprocess.run(cmd, capture_output=True, text=True, **kw)
+    if r.returncode != 0:
+        raise BinaryError(f"{' '.join(cmd[:2])} {cmd[-1]}: " + (r.stderr or r.stdout).strip())
+    return r.stdout
+
+
+def _cubins(binary, arch):
+    """The cubins of `binary` for sm_<arch>: that architecture's if any, else its family's, else all."""
+    import atexit
+    import shutil as _shutil
+    import tempfile
+
+    key = (binary, arch)
+    if key not in _extracted:
+        if binary.suffix == ".cubin":
+            _extracted[key] = [binary]
+            return _extracted[key]
+        names = re.findall(r"ELF file\s+\d+:\s+(\S+)", _run(["cuobjdump", "-lelf", str(binary)]))
+        if not names:
+            raise BinaryError(f"{binary} holds no cubin (cuobjdump -lelf lists none)")
+        chosen = ([n for n in names if f".sm_{arch}" in n]
+                  or [n for n in names if f".sm_{arch[:-1]}" in n] or names)
+        tmp = tempfile.mkdtemp(prefix="ncu_utils_cubins_")
+        atexit.register(_shutil.rmtree, tmp, True)
+        _run(["cuobjdump", "-xelf", ",".join(chosen), str(binary)], cwd=tmp)
+        _extracted[key] = sorted(Path(tmp).glob("*.cubin"))
+    return _extracted[key]
+
+
 def inline_chains(action, binary):
     """Map each PC of the kernel to its inline chain, from the binary that was profiled.
 
-    `action.source_info(pc)` gives only the innermost inlined frame (a library header
+    `action.source_info(pc)` gives one frame, mostly the innermost inlined one (a library header
     line for CUTLASS/CuTe code); `nvdisasm -gi` gives every frame. `binary` is a cubin
-    or anything `cuobjdump -xelf` can extract one from (executable, .so, fatbin).
+    or anything `cuobjdump -xelf` can extract one from (executable, .so, fatbin); only the
+    cubins of the report's GPU architecture that define the kernel are disassembled, once.
 
     Returns (chains, checked, mismatched): chains maps pc -> [(file, line), ...] from
     the innermost frame to the outermost, which is the line in the kernel function
     itself; checked/mismatched count the sampled PCs whose SASS was compared with the
-    report's. Needs cuobjdump and nvdisasm on PATH.
+    report's (a PC outside the kernel's own code, such as a non-inlined device call,
+    counts as mismatched). Needs cuobjdump and nvdisasm on PATH; raises BinaryError
+    when the binary cannot be read.
     """
-    import subprocess
-    import tempfile
-
+    binary = Path(binary).resolve()
+    if not binary.is_file():
+        raise BinaryError(f"{binary} does not exist")
     mangled = kernel_name(action, "mangled")
+    arch = (f"{int(action['device__attribute_compute_capability_major'].value())}"
+            f"{int(action['device__attribute_compute_capability_minor'].value())}")
     # launch__function_pcs: one instance per function of the launch, the kernel first
     base = int(metric_value_at(action["launch__function_pcs"], 0))
     sampled = [pc for pc, _ in per_pc_values(action, "smsp__pcsamp_sample_count")]
     best = ({}, 0, 0)
-    with tempfile.TemporaryDirectory() as tmp:
-        binary = Path(binary).resolve()
-        if binary.suffix == ".cubin":
-            cubins = [binary]
-        else:
-            subprocess.run(["cuobjdump", "-xelf", "all", str(binary)], cwd=tmp,
-                           check=True, capture_output=True)
-            cubins = sorted(Path(tmp).glob("*.cubin"))
-        for cubin in cubins:
-            out = subprocess.run(["nvdisasm", "-gi", str(cubin)], capture_output=True,
-                                 text=True).stdout
-            insts, chain, in_func, block = {}, [], False, False
-            for line in out.splitlines():
-                if "\t.section\t.text." in line:
-                    in_func = line.split(".text.", 1)[1].split(",")[0] == mangled
-                    chain, block = [], False
-                    continue
-                if not in_func:
-                    continue
-                m = _FILE_RE.search(line)
-                if m:
-                    if not block:
-                        chain = []
-                    chain.append((m.group(1), int(m.group(2))))
-                    block = True
-                    continue
-                block = False
-                mi = _INST_RE.match(line)
-                if mi:
-                    insts[base + int(mi.group(1), 16)] = (mi.group(2), list(chain))
-            if not insts:
+    for cubin in _cubins(binary, arch):
+        if mangled.encode() not in cubin.read_bytes():
+            continue
+        if cubin not in _disassembly:
+            _disassembly[cubin] = _run(["nvdisasm", "-gi", str(cubin)])
+        insts, chain, in_func, block = {}, [], False, False
+        for line in _disassembly[cubin].splitlines():
+            if "\t.section\t.text." in line:
+                in_func = line.split(".text.", 1)[1].split(",")[0] == mangled
+                chain, block = [], False
                 continue
-            checked = [pc for pc in sampled if pc in insts]
-            mismatched = sum(_opcode(insts[pc][0]) != _opcode(action.sass_by_pc(pc))
-                             for pc in checked) + len(sampled) - len(checked)
-            if not best[0] or mismatched < best[2]:
-                best = ({pc: c for pc, (_, c) in insts.items()}, len(sampled), mismatched)
+            if not in_func:
+                continue
+            m = _FILE_RE.search(line)
+            if m:
+                if not block:
+                    chain = []
+                chain.append((m.group(1), int(m.group(2))))
+                block = True
+                continue
+            block = False
+            mi = _INST_RE.match(line)
+            if mi:
+                insts[base + int(mi.group(1), 16)] = (mi.group(2), list(chain))
+        if not insts:
+            continue
+        checked = [pc for pc in sampled if pc in insts]
+        mismatched = sum(_opcode(insts[pc][0]) != _opcode(action.sass_by_pc(pc))
+                         for pc in checked) + len(sampled) - len(checked)
+        if not best[0] or mismatched < best[2]:
+            best = ({pc: c for pc, (_, c) in insts.items()}, len(sampled), mismatched)
     return best
 
 

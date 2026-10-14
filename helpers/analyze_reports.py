@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Extract and compare key metrics and NCU's rule results from .ncu-rep files.
+"""Extract and compare key metrics and NCU's rule results from ncu reports (.ncu-rep / .ncu-repz).
 
 Produces in `<run_dir>/analysis/`, per profiled kernel:
     metrics_all_<tag>.json     — every metric, archival
@@ -113,7 +113,7 @@ def main():
     ap.add_argument("--tag", type=str, action="append", required=True,
                     help="Short tag for each report. Must be passed once per --report.")
     ap.add_argument("--kernel", type=str, default=None,
-                    help="Regex on the demangled kernel name: keep only matching kernels.")
+                    help="Regex on the kernel's function or demangled name: keep only matching kernels.")
     args = ap.parse_args()
 
     if len(args.report) != len(args.tag):

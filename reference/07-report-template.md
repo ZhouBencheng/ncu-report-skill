@@ -36,9 +36,9 @@ Minimal runnable command listing:
     nvcc -O2 -std=c++17 -lineinfo -arch=sm_103a harness.cu -o "$PROFILE_RUN_DIR/harness/harness"
 
     # Profile (full: SOL, source counters, PM sampling + warp-state timelines)
-    ncu --set full --section PmSampling_WarpStates --import-source yes \
+    ncu --set full --import-source yes \
         -k "regex:<kernel_regex>" -c 1 \
-        -o "$PROFILE_RUN_DIR/reports/full_<tag>" \
+        -o "$PROFILE_RUN_DIR/reports/full_<tag>.ncu-rep" \
         "$PROFILE_RUN_DIR/harness/harness" [args]
 
 ### Artifacts

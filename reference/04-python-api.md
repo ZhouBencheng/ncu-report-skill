@@ -15,7 +15,7 @@ import ncu_utils                               # puts ncu_report on sys.path
 import ncu_report
 ```
 
-The API below is ncu 2026.1's; `help(ncu_report.IAction)` documents your version.
+The API below is ncu 2026.3's (it reads 2026.1 reports too); `help(ncu_report.IAction)` documents your version.
 
 ---
 
@@ -82,7 +82,7 @@ This is how you discover the *actual* metric names available on your GPU instead
 Many metrics have multiple values per collection. `value()` returns the aggregate (sum / avg depending on `rollup_operation`), but you can also enumerate the individual samples.
 
 ```python
-m = action["pmsampling:smsp__warps_issue_stalled_long_scoreboard.avg"]
+m = action["TPC.TriageCompute.sm__cycles_active.avg.per_cycle_elapsed"]
 n = m.num_instances()              # e.g., ~1000 for a PM-sampled metric
 print(f"instances: {n}")
 
@@ -98,7 +98,16 @@ for i in range(n):
     vals.append(v)
 ```
 
-For PM sampling this is the timeline — index `i` is a time-ordered sample, and `m.correlation_ids()` holds each sample's GPU timestamp (ns). In ncu 2026.1 the series are named `pmsampling:smsp__warps_issue_stalled_*` (PmSampling_WarpStates) and `<UNIT>.<group>.<metric>` (PmSampling, e.g. `TPC.TriageCompute.sm__inst_executed_realtime.avg.per_cycle_active`); `ncu_utils.pm_series_names(action)` lists them. Bucket these for an ASCII plot (see `helpers/plot_timeline.py`).
+For PM sampling this is the timeline — index `i` is a time-ordered sample, and `m.correlation_ids()` holds each sample's GPU timestamp (ns). The PmSampling section names the series `<UNIT>.<group>.<metric>` (e.g. `TPC.TriageCompute.sm__inst_executed_realtime.avg.per_cycle_active`); ncu 2026.1's PmSampling_WarpStates section (removed in 2026.3) added `pmsampling:smsp__warps_issue_stalled_*`. `ncu_utils.pm_series_names(action)` lists them. Bucket these for an ASCII plot (see `helpers/plot_timeline.py`).
+
+ncu_report 2026.3 aligns a series to the workload's timestamps (context-switch filtered); it works on older reports too:
+
+```python
+timelines = action.timelines()                     # ITimelines, or None
+aligned = timelines.aligned_metric(m)              # IMetric with aligned instances / correlation ids, or None
+```
+
+The stall reasons over time are in `action.timed_warp_samples()`: one dict per sample, `{timestamp, pc, stall_reason, not_issued}`, with `stall_reason` an `ncu_report.StallReason_*` code (SourceCounters, in `--set full`). `ncu_utils.warp_state_timeline(action, buckets)` turns them into the share of each reason per time bucket.
 
 ---
 
@@ -130,7 +139,7 @@ stalls = per_pc_stalls(action, "smsp__pcsamp_warps_issue_stalled_long_scoreboard
 
 Aggregate by `(file, line)` and sort by total to get hottest stall lines. See `helpers/extract_stall_hotspots.py` for a complete implementation.
 
-`source_info(pc)` returns only the innermost inlined frame (`file_name()`, `line()`): for CUTLASS/CuTe code that is a library header, the same for every kernel. The full inline chain is in the binary's line table: `ncu_utils.inline_chains(action, binary)` reads it with `nvdisasm -gi` and maps each PC (offset from `launch__function_pcs`, the kernel's first PC) to its frames, checking the SASS against `action.sass_by_pc(pc)`; `extract_stall_hotspots.py --binary` uses it.
+`source_info(pc)` returns one frame (`file_name()`, `line()`), mostly the innermost inlined one: for CUTLASS/CuTe code that is a library header, the same for every kernel. The full inline chain is in the binary's line table: `ncu_utils.inline_chains(action, binary)` reads it with `nvdisasm -gi` and maps each PC (offset from `launch__function_pcs`, the kernel's first PC) to its frames, checking the SASS against `action.sass_by_pc(pc)`; `extract_stall_hotspots.py --binary` uses it.
 
 ---
 
@@ -289,6 +298,6 @@ This makes future re-analysis cheap: the raw data lives as JSON, you don't need 
 
 - **`KeyError` on a metric that "should" exist**: the metric has a different name on this GPU. Check [`08-metric-names.md`](08-metric-names.md) or enumerate with `action.metric_names()`.
 - **`num_instances() == 0`** but you expected per-instance data: the metric wasn't collected in instanced mode, or the section that produces it wasn't requested. Re-run ncu with the right `--section`.
-- **`has_correlation_ids() == False`** on a source-level metric: `-lineinfo` wasn't on the compile line. Rebuild.
+- **`has_correlation_ids() == False`** on a per-PC metric: the metric was not collected per PC (no SourceCounters section). Without `-lineinfo` the per-PC samples are still there; only `source_info(pc)` returns None.
 - **`source_info(pc)` returns None**: same as above — rebuild with `-lineinfo`.
 - **Metric value is a string** like `"PolicySpread"`: it's an enum, use `m.as_string()` or `m.value()` and expect a string.

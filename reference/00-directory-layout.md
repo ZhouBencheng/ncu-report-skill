@@ -6,7 +6,7 @@
 
 ## Top-level rule
 
-**All profiling artifacts live under one profile root.** Use the directory your project names for profiling artifacts (look in its README, AGENTS.md or contributing docs); if it names none, create `profile/` at the repo root. Never scatter `.ncu-rep` files across random locations. Never put profile artifacts under `solution/`, `src/`, `scripts/`, or other source directories.
+**All profiling artifacts live under one profile root.** Use the directory your project names for profiling artifacts (look in its README, AGENTS.md or contributing docs); if it names none, create one at the repo root and name it in the report. Never scatter `.ncu-rep` files across random locations. Never put profile artifacts under `solution/`, `src/`, `scripts/`, or other source directories.
 
 ```
 <repo_root>/
@@ -154,9 +154,9 @@ nvcc -O2 -std=c++17 -lineinfo -arch=sm_100a \
      harness.cu -o "$PROFILE_RUN_DIR/harness/kernel_harness"
 
 # run ncu (where the GPU is)
-ncu --set full --section PmSampling_WarpStates --import-source yes \
+ncu --set full --import-source yes \
     -k "regex:my_kernel" -c 1 \
-    -o "$PROFILE_RUN_DIR/reports/full_<tag>" \
+    -o "$PROFILE_RUN_DIR/reports/full_<tag>.ncu-rep" \
     "$PROFILE_RUN_DIR/harness/kernel_harness" [args]
 
 # parse
@@ -164,7 +164,7 @@ python3 <skill>/helpers/analyze_reports.py --run-dir "$PROFILE_RUN_DIR" \
     --report "$PROFILE_RUN_DIR/reports/full_<tag>.ncu-rep" --tag <tag>
 ```
 
-`<skill>` is this skill's directory. Every helper in `../helpers/` takes `--run-dir` and writes under `<run-dir>/analysis/`.
+`<skill>` is this skill's directory. The report helpers in `../helpers/` (`analyze_reports.py`, `extract_stall_hotspots.py`, `plot_timeline.py`) take `--run-dir` and write under `<run-dir>/analysis/`.
 
 ---
 
@@ -173,7 +173,7 @@ python3 <skill>/helpers/analyze_reports.py --run-dir "$PROFILE_RUN_DIR" \
 1. `mkdir -p "$PROFILE_RUN_DIR"/{harness,reports,analysis}` — a new run name, the three subdirs up front.
 2. Copy or write the harness or driver into `harness/`.
 3. Compile into the same dir with `-lineinfo` (if you compile at all).
-4. Run ncu with `-o "$PROFILE_RUN_DIR/reports/full_<tag>"`.
+4. Run ncu with `-o "$PROFILE_RUN_DIR/reports/full_<tag>.ncu-rep"`.
 5. Put analysis outputs and one-off scripts under `analysis/`.
 6. Write `REPORT.md` at `$PROFILE_RUN_DIR/REPORT.md`.
 7. Before starting a *new* run, go back to step 1 with a new name — never write into the existing one.

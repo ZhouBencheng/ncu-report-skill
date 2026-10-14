@@ -9,7 +9,7 @@
 
 A Claude Code skill for profiling CUDA kernels with Nsight Compute on NVIDIA Blackwell (B200 / B300, sm_100 / sm_103). Covers the full workflow: get a profile target (the real code, or a standalone harness), run `ncu`, parse reports with the Python API, walk through six analysis dimensions, match patterns to a diagnosis playbook, and write an evidence-backed optimization report.
 
-Written against Nsight Compute 2026.1.1 (CUDA 13.2): its sets, rule-result format, PM-sampling series names and default clock control.
+Written against Nsight Compute 2026.3.1, the newest release (CUDA 13.2 bundles 2026.1.1; the skill's commands and helpers handle both): its sets and sections, report format, rule-result API, PM-sampling series and timelines, and default clock control.
 
 The skill is self-contained: reference docs, reusable helper scripts (harness template, safetensors loader, report-analysis Python), and a companion Blackwell programming reference all ship in this repo.
 
@@ -38,7 +38,7 @@ The skill is self-contained: reference docs, reusable helper scripts (harness te
 │   ├── 05-analysis-dimensions.md     ← six analysis dimensions
 │   ├── 06-diagnosis-playbook.md      ← pattern → cause → fix
 │   ├── 07-report-template.md         ← final report structure
-│   ├── 08-metric-names.md            ← Blackwell metric names (ncu 2026.1)
+│   ├── 08-metric-names.md            ← Blackwell metric names (ncu 2026.3)
 │   └── 09-common-issues.md           ← permissions, PM sampling, JIT toolchains, etc.
 └── blackwell-cuda-programming.md     ← companion reference: Blackwell programming principles
 ```
@@ -107,7 +107,7 @@ When invoked, Claude reads `SKILL.md`, follows its workflow (phases 0 → 6 in `
 
 ## Running the helpers directly (no Claude needed)
 
-The Python helpers work standalone for any `.ncu-rep` you have:
+The Python helpers work standalone for any `.ncu-rep` / `.ncu-repz` you have:
 
 ```bash
 # The helpers find ncu_report from the ncu on PATH; this prints where
@@ -144,7 +144,7 @@ The C++ harness template + safetensors loader live under `helpers/`; copy them i
 ## Requirements
 
 - CUDA Toolkit with `nvcc`, `cuobjdump`, `nvdisasm` (tested with 13.2)
-- Nsight Compute CLI `ncu` (tested with 2026.1.1)
+- Nsight Compute CLI `ncu` (tested with 2026.3.1 and 2026.1.1)
 - The `ncu_report` Python module (ships with Nsight Compute under `extras/python/`)
 - An NVIDIA GPU with permission to access performance counters (see `reference/09-common-issues.md` if `ncu` reports `ERR_NVGPUCTRPERM`)
 

@@ -28,6 +28,14 @@ around it.
 
 ## ncu warnings
 
+### `Option '--section PmSampling_WarpStates' did not match any section`
+
+ncu 2026.3 removed that section (it existed in 2026.1). Drop the option: `--set full` collects the timed warp samples the stall-reason timelines are drawn from.
+
+### The report is `<name>.ncu-repz`, not `<name>.ncu-rep`
+
+ncu 2026.3 appends `.ncu-repz` when `-o` names no extension. Both formats load the same in ncu, the GUI and `ncu_report`; give `-o` the `.ncu-rep` extension to keep the name you asked for.
+
 ### `Unable to access the following 6 metrics: ctc__rx_bytes_data_user.sum, ...`
 
 Harmless. The `ctc__*` metrics count chip-to-chip (C2C) link traffic; a system without that link cannot collect them, and `--set full` asks for them anyway.
@@ -50,11 +58,11 @@ This warning is harmless but noisy. ncu falls back to reading from the CUDA inst
 
 ## `-k "regex:..."` matches nothing
 
-1. **Use the demangled name.** Templates produce something like `void my_kernel<(int)8, (int)256>(...)`. Check:
+1. **Match the function name.** `-k` matches the kernel's function name by default (`--kernel-name-base function`): `my_kernel` for `void my_kernel<(int)8, (int)256>(float *)`. To tell template instances apart, add `--kernel-name-base demangled` and match the full name. List the names:
    ```bash
    cuobjdump -res-usage ./my_harness | grep Function | cu++filt
    ```
-   Match against the visible string, or run the survey (`03-collection.md`, Recipe 0), which lists each launch's demangled name.
+   or run the survey (`03-collection.md`, Recipe 0), which lists each launch's function name.
 2. **Escape regex metacharacters.** `<` and `>` don't need escaping in most regex flavors, but be careful with parentheses.
 3. **The kernel might not have been launched.** Run the harness without ncu and confirm the kernel actually runs.
 
@@ -78,16 +86,16 @@ For JIT / framework-integrated builds:
 
 ## Source view shows only CUTLASS / CuTe / library headers
 
-ncu maps each PC to its **innermost** inlined frame. In template-heavy code nearly every instruction is inlined from a library header (`mma_sm80.hpp` for every HMMA, `barrier.h` for every mbarrier wait), so the hottest "lines" are the same headers for every kernel. Pass the profiled binary (executable, `.so` or cubin) to `extract_stall_hotspots.py --binary`: it reads the full inline chain with `nvdisasm -gi` and ranks the lines in the kernel function itself. It reports how many sampled PCs' SASS matched the report; a mismatch means the binary is not the one that was profiled.
+ncu maps most PCs to their **innermost** inlined frame. In template-heavy code nearly every instruction is inlined from a library header (`mma_sm80.hpp` for every HMMA, `barrier.h` for every mbarrier wait), so the hottest "lines" are the same headers for every kernel. Pass the profiled binary (executable, `.so` or cubin) to `extract_stall_hotspots.py --binary`: it reads the full inline chain with `nvdisasm -gi` and ranks the lines in the kernel function itself. It reports how many sampled PCs' SASS matched the report; a mismatch means the binary is not the one that was profiled.
 
 ---
 
 ## PM sampling returns nothing
 
-1. **You didn't request it.** `--set full` includes the PmSampling section; add `--section PmSampling_WarpStates` for the stall-reason timelines.
+1. **You didn't request it.** `--set full` includes the PmSampling section. (`--section PmSampling_WarpStates`, for stall-reason series, exists only before ncu 2026.3; there the stall reasons over time come from the timed warp samples.)
 2. **vGPU / MIG environment.** PM sampling isn't supported under virtualization. Use metric-based (non-timeline) analysis only.
 3. **Kernel too short.** Kernels under ~20 µs produce few PM samples; what comes back is dominated by warmup noise.
-4. **You asked for a name the report does not have.** ncu 2026.1 names the PmSampling series `<UNIT>.<group>.<metric>` (e.g. `TPC.TriageCompute.sm__cycles_active.avg.per_cycle_elapsed`); `pmsampling:sm__throughput.*` and `pmsampling:dram__throughput.*` from older docs do not exist. `plot_timeline.py --list` prints what the report has.
+4. **You asked for a name the report does not have.** ncu 2026.1 and 2026.3 name the PmSampling series `<UNIT>.<group>.<metric>` (e.g. `TPC.TriageCompute.sm__cycles_active.avg.per_cycle_elapsed`); `pmsampling:sm__throughput.*` and `pmsampling:dram__throughput.*` from older docs do not exist. `plot_timeline.py --list` prints what the report has.
 
 ---
 
@@ -149,7 +157,7 @@ If `ncu` is not on PATH or the install is elsewhere, put its `extras/python` on 
 
 ### "The Python benchmarking script runs but ncu sees no matching kernel"
 
-`-k "regex:..."` must match the demangled name. TVM-FFI wraps kernels in `__global__ void kernel(...)` with a fixed name — list them with `cuobjdump -res-usage <path to .so> | grep Function` (mangled; `cu++filt` demangles), or run the survey in `03-collection.md`.
+`-k "regex:..."` matches the function name (the full demangled name with `--kernel-name-base demangled`). TVM-FFI wraps kernels in `__global__ void kernel(...)` with a fixed name — list them with `cuobjdump -res-usage <path to .so> | grep Function` (mangled; `cu++filt` demangles), or run the survey in `03-collection.md`.
 
 ---
 
@@ -171,7 +179,7 @@ ncu handles CUDA Graph launches fine — each captured kernel shows up as a sepa
 
 ### Results jitter between runs
 
-1. **Check the clock.** ncu locks the clock by default (`boost` in ncu 2026.1, `base` before); a run with
+1. **Check the clock.** ncu locks the clock by default (`boost` in ncu 2026.1–2026.3, `base` before); a run with
    `--clock-control none` and no outer lock profiles at whatever clock the GPU picks. Compare
    `sm__cycles_elapsed.avg.per_second` between the reports, and lock your own clock only as
    [`03-collection.md`](03-collection.md#gpu-clocks) describes.
@@ -198,7 +206,7 @@ It depends on the kernel type:
 - Element-wise / reduction: usually 10-30%, because they're DRAM-BW-bound.
 - Attention / recurrence kernels: varies wildly; compare against a reference implementation.
 
-Always check Speed-of-Light alongside: `dram__bytes_read.sum.pct_of_peak_sustained_elapsed`. If DRAM is saturated, low SM throughput is expected and OK. If DRAM is idle AND SM is idle, you're latency-bound.
+Always check Speed-of-Light alongside: `gpu__dram_throughput.avg.pct_of_peak_sustained_elapsed` (reads + writes). If DRAM is saturated, low SM throughput is expected and OK. If DRAM is idle AND SM is idle, you're latency-bound.
 
 ### "The details page says `Est. Speedup: X%` — is that reliable?"
 

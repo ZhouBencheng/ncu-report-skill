@@ -1,13 +1,13 @@
 ---
 name: ncu-report-skill
-description: Profile CUDA kernels with Nsight Compute (ncu 2026.1) on Blackwell (B200 / B300, sm_100 / sm_103) and other NVIDIA GPUs. Use when the user asks to profile a kernel, analyze its performance, diagnose bottlenecks, read an ncu report, or write an optimization plan — including variants in Chinese ("profile 一下", "为什么慢", "ncu 报告").
+description: Profile CUDA kernels with Nsight Compute (ncu 2026.3) on Blackwell (B200 / B300, sm_100 / sm_103) and other NVIDIA GPUs. Use when the user asks to profile a kernel, analyze its performance, diagnose bottlenecks, read an ncu report, or write an optimization plan — including variants in Chinese ("profile 一下", "为什么慢", "ncu 报告").
 ---
 
 # Skill: CUDA Kernel Profiling (Nsight Compute)
 
 **When to use:** user asks to profile a CUDA kernel, analyze its performance, find its bottlenecks, or write an optimization plan based on Nsight Compute data. Triggers include: "profile X", "为什么这个 kernel 慢", "ncu report 说...", "下一步怎么优化", "帮我看一下这份 ncu 报告".
 
-**Written for:** Nsight Compute 2026.1 (CUDA 13.2) on Blackwell — B200 (sm_100) and B300 (sm_103), 148 SMs each. Most advice is generic; GPU- or version-specific notes say so. ncu's flags, sets and metric names change between releases: `ncu --version`, `ncu --help` and `ncu --list-sets` are the authority when something here does not match what you have.
+**Written for:** Nsight Compute 2026.3.1, the newest release (it also reads reports of older versions), on Blackwell — B200 (sm_100) and B300 (sm_103), 148 SMs each. A CUDA toolkit bundles the ncu of its release (CUDA 13.2: 2026.1.1); newer ones are separate installs (NVIDIA's CUDA package repositories carry `nsight-compute-<version>`, and the toolkit's `ncu` launcher runs the newest installed). Most advice is generic; GPU- or version-specific notes say so. ncu's flags, sets and metric names change between releases: `ncu --version`, `ncu --help`, `ncu --list-sets` and `ncu --list-sections` are the authority when something here does not match what you have.
 
 ---
 
@@ -21,16 +21,16 @@ Most under-performing CUDA kernels are under-performing for exactly one reason t
 
 ## Quickstart (what to do when someone says "profile this kernel")
 
-0. **Create a new run directory first** — **one directory per run**, never reuse an existing one — under the directory your project keeps profiling artifacts in (its README, AGENTS.md or contributing docs may name one; if none does, `profile/` at the repo root). Each run holds its own `harness/`, `reports/`, `analysis/` and `REPORT.md`; the docs call it `$PROFILE_RUN_DIR`. See [`reference/00-directory-layout.md`](reference/00-directory-layout.md).
+0. **Create a new run directory first** — **one directory per run**, never reuse an existing one — under the directory your project keeps profiling artifacts in (its README, AGENTS.md or contributing docs may name one; if none does, create one at the repo root and say where in the report). Each run holds its own `harness/`, `reports/`, `analysis/` and `REPORT.md`; the docs call it `$PROFILE_RUN_DIR`. See [`reference/00-directory-layout.md`](reference/00-directory-layout.md).
 
 1. **Decide what you're profiling.** What inputs? Which dispatch path? What question do you want answered? If the kernel takes variable-sized inputs (variable seq lengths, variable batch sizes), you must pick specific representative shapes from the user's workload — don't profile with arbitrary inputs.
 
 2. **Get a profile target.** If the kernel already carries line info (many prebuilt libraries do; [`reference/02-harness-guide.md`](reference/02-harness-guide.md) shows how to check), profile the real code: a few-line driver (Python or C++) that calls it once on a representative input is enough. Build a standalone harness with `-lineinfo` when the build has no line info or the kernel is buried in a slow program; the template is [`helpers/harness_template.cu`](helpers/harness_template.cu). Keep it in `$PROFILE_RUN_DIR/harness/`.
 
-3. **Collect one report** with `--set full` plus the warp-state timelines. In ncu 2026.1 `full` already holds the per-PC stall samples (SourceCounters) and the PM-sampling timelines; `--import-source yes` embeds the source so the report reads anywhere:
+3. **Collect one report** with `--set full`: it holds the per-PC stall samples and timed warp samples (SourceCounters) and the PM-sampling timelines; `--import-source yes` embeds the source so the report reads anywhere. Give `-o` the `.ncu-rep` extension (without one, ncu 2026.3 writes `.ncu-repz`; the helpers read both):
    ```bash
-   ncu --set full --section PmSampling_WarpStates --import-source yes \
-       -k "regex:KERNEL" -c 1 -o "$PROFILE_RUN_DIR/reports/full_<tag>" <command> [args]
+   ncu --set full --import-source yes \
+       -k "regex:KERNEL" -c 1 -o "$PROFILE_RUN_DIR/reports/full_<tag>.ncu-rep" <command> [args]
    ```
    See [`reference/03-collection.md`](reference/03-collection.md) for picking the launch, skipping warm-up and faster targeted runs.
 
@@ -48,7 +48,7 @@ Most under-performing CUDA kernels are under-performing for exactly one reason t
 
 Only `ncu` (and the program it launches) needs a GPU. Building the harness for an explicit architecture, `ncu --import`, and every Python helper only read and write files, so they can run on a machine or in a container without one. No helper picks a GPU or locks a clock: run `ncu` on the GPU your environment gives you, the way it runs any GPU command. If GPU commands run in another container or on another machine, keep the run directory where both see it (inside the project, say) and pass paths that exist on both sides.
 
-ncu locks the GPU clock for every profiled kernel by default, which keeps reports comparable: at boost in ncu 2026.1 (`--clock-control boost`; older versions default to `base`, which on a B300 runs kernels ~1.7x slower). `ncu --help` shows the default. To profile at another fixed clock, lock it outside ncu (e.g. `sudo nvidia-smi -lgc MHZ,MHZ` before, `sudo nvidia-smi -rgc` after) and pass `--clock-control none`, or ncu replaces your lock with its own. See [`reference/03-collection.md`](reference/03-collection.md#gpu-clocks).
+ncu locks the GPU clock for every profiled kernel by default, which keeps reports comparable: at boost in ncu 2026.1–2026.3 (`--clock-control boost`; older versions default to `base`, which on a B300 runs kernels ~1.7x slower). `ncu --help` shows the default. To profile at another fixed clock, lock it outside ncu (e.g. `sudo nvidia-smi -lgc MHZ,MHZ` before, `sudo nvidia-smi -rgc` after) and pass `--clock-control none`, or ncu replaces your lock with its own. See [`reference/03-collection.md`](reference/03-collection.md#gpu-clocks).
 
 ---
 
@@ -66,7 +66,7 @@ ncu locks the GPU clock for every profiled kernel by default, which keeps report
 | [`reference/05-analysis-dimensions.md`](reference/05-analysis-dimensions.md) | Six analysis dimensions: occupancy, balance, stalls, tensor core, timeline, memory |
 | [`reference/06-diagnosis-playbook.md`](reference/06-diagnosis-playbook.md) | Pattern → diagnosis → fix. Merges Blackwell programming principles with NCU signals |
 | [`reference/07-report-template.md`](reference/07-report-template.md) | How to structure the final report |
-| [`reference/08-metric-names.md`](reference/08-metric-names.md) | Metric names on Blackwell with ncu 2026.1, and the ones that differ from older docs |
+| [`reference/08-metric-names.md`](reference/08-metric-names.md) | Metric names on Blackwell with ncu 2026.3, and the ones that differ from older docs |
 | [`reference/09-common-issues.md`](reference/09-common-issues.md) | Permissions, PM sampling, inlined code, TVM-FFI / PyTorch gotchas |
 
 ### Helpers (reusable code)
@@ -85,7 +85,7 @@ ncu locks the GPU clock for every profiled kernel by default, which keeps report
 
 ## Critical lessons (don't skip)
 
-1. **Metric names differ between GPUs and ncu releases.** [`reference/08-metric-names.md`](reference/08-metric-names.md) lists what `--set full` collects on Blackwell with ncu 2026.1. A name missing from a report may still exist: request it with `--metrics`. Enumerate with `action.metric_names()` or `ncu --query-metrics`.
+1. **Metric names differ between GPUs and ncu releases.** [`reference/08-metric-names.md`](reference/08-metric-names.md) lists what `--set full` collects on Blackwell with ncu 2026.3. A name missing from a report may still exist: request it with `--metrics`. Enumerate with `action.metric_names()` or `ncu --query-metrics`.
 
 2. **Always compile with `-lineinfo`** (or profile code that has it). Without it, ncu's source view is blank and you cannot do per-line stall analysis. ncu attributes each PC to its innermost inlined frame — a library header for CUTLASS/CuTe code — so pass the profiled binary to `extract_stall_hotspots.py --binary` to rank the kernel's own lines.
 
@@ -95,7 +95,7 @@ ncu locks the GPU clock for every profiled kernel by default, which keeps report
 
 5. **NCU's rule engine (`--page details`, or `rules_<tag>.txt` from `analyze_reports.py`) tells you where to look.** Each rule comes with `Est. Speedup: X%`. Read them first, then check each against the counters before ranking it: estimates for small grids, shared-memory bank conflicts or L2 compression can be far off.
 
-6. **Don't delegate understanding.** Run the profiles yourself, open the reports, cite specific metric values. Never write "the profile shows it's memory-bound" — instead, name the two or three metric values that back your conclusion (e.g., "`dram__bytes_read.sum.pct_of_peak_sustained_elapsed` well under 10%, and `long_scoreboard` stalls dominate the pcsamp histogram, so the kernel is **latency-bound on L1**, not DRAM-bandwidth-bound"). Fill in the actual numbers from your report. Specificity is the deliverable.
+6. **Don't delegate understanding.** Run the profiles yourself, open the reports, cite specific metric values. Never write "the profile shows it's memory-bound" — instead, name the two or three metric values that back your conclusion (e.g., "`gpu__dram_throughput.avg.pct_of_peak_sustained_elapsed` well under 10%, and `long_scoreboard` stalls dominate the pcsamp histogram, so the kernel is **latency-bound on L1**, not DRAM-bandwidth-bound"). Fill in the actual numbers from your report. Specificity is the deliverable.
 
 ---
 

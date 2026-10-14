@@ -127,7 +127,7 @@ If `K < 8`: consider batching multiple iterations' results into a vectorized wri
 **Signals:**
 - `smsp__pcsamp_warps_issue_stalled_long_scoreboard / smsp__pcsamp_sample_count > 0.40`.
 - `smsp__average_warps_issue_stalled_long_scoreboard_per_issue_active.ratio > 3`.
-- `dram__bytes_read.sum.pct_of_peak_sustained_elapsed < 10%` (→ not DRAM-bandwidth-bound).
+- `gpu__dram_throughput.avg.pct_of_peak_sustained_elapsed < 10%` (→ not DRAM-bandwidth-bound).
 - Hotspot lines are global loads (check `stall_hotspots_<tag>.txt`).
 
 **Why:** warps issue a load, then stall waiting for it to return before the next dependent op. Usually combined with low occupancy or insufficient ILP.

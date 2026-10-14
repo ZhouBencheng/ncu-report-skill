@@ -1,6 +1,6 @@
 # Profile Collection Commands
 
-This document lists the exact `ncu` commands you should run, in what order, and what each flag does. They are written against Nsight Compute 2026.1; `ncu --help`, `ncu --list-sets` and `ncu --list-sections` show what your version has.
+This document lists the exact `ncu` commands you should run, in what order, and what each flag does. They are written against Nsight Compute 2026.3 (differences from 2026.1, which CUDA 13.2 bundles, are noted); `ncu --help`, `ncu --list-sets` and `ncu --list-sections` show what your version has.
 
 ---
 
@@ -28,35 +28,39 @@ Before profiling in depth, list every kernel a call launches with its duration a
 
 ```bash
 ncu --metrics gpu__time_duration.sum,sm__cycles_elapsed.avg.per_second \
-    -o "$PROFILE_RUN_DIR/reports/survey_<tag>" ./harness [args]
+    -o "$PROFILE_RUN_DIR/reports/survey_<tag>.ncu-rep" ./harness [args]
 ```
 
-Each launch is one entry with its demangled name: pick the kernel and the regex for `-k` from here. `analyze_reports.py` on the survey report writes one set of files per kernel.
+Read it as one table per kernel:
+
+```bash
+ncu --import "$PROFILE_RUN_DIR/reports/survey_<tag>.ncu-rep" --print-summary per-kernel --print-kernel-base function
+```
+
+Each entry has the kernel's function name (what `-k` matches), its launch shape, the number of invocations and the metrics: pick the kernel and the regex for `-k` from here.
 
 ---
 
 ## Recipe 1: Full profile (the one report the analysis needs)
 
-Collects every standard section — SOL, occupancy, memory, compute, scheduler, warp state, the per-PC stall samples (SourceCounters) and the PM-sampling timelines — plus the stall-reason timelines:
+Collects every standard section — SOL, occupancy, memory, compute, scheduler, warp state, the per-PC stall samples and timed warp samples (SourceCounters) and the PM-sampling timelines:
 
 ```bash
 ncu --set full \
-    --section PmSampling_WarpStates \
     --import-source yes \
     -k "regex:KERNEL_REGEX" \
     -c 1 \
-    -o "$PROFILE_RUN_DIR/reports/full_<tag>" \
+    -o "$PROFILE_RUN_DIR/reports/full_<tag>.ncu-rep" \
     ./harness [args]
 ```
 
 | Flag | Meaning |
 |---|---|
-| `--set full` | Every built-in section, including `SourceCounters` and `PmSampling` (ncu 2026.1) |
-| `--section PmSampling_WarpStates` | Time-series of warp stall states (not in `full`) |
+| `--set full` | Every built-in section, including `SourceCounters` and `PmSampling` |
 | `--import-source yes` | Embeds the CUDA source files into the report, so the source view works where the source is not (another machine, a container). The files are read where ncu runs, at collection only (it cannot be added to an existing report): when the paths recorded by the build do not exist there, pass `--source-folders DIR,...` with directories visible to that machine or container |
-| `-k "regex:..."` | Only profile kernels whose demangled name matches. Reduces replay count. |
+| `-k "regex:..."` | Only profile kernels whose name matches: the function name by default (`my_kernel`), the full demangled name (`void my_kernel<(int)8>(float *)`) with `--kernel-name-base demangled`. Reduces replay count. |
 | `-c 1` | Only profile the first matching kernel launch. Avoids duplicates when the kernel is called in a loop. |
-| `-o "$PROFILE_RUN_DIR/reports/full_<tag>"` | Output path — `.ncu-rep` is appended automatically. |
+| `-o "$PROFILE_RUN_DIR/reports/full_<tag>.ncu-rep"` | Output path. Give the extension: without one, ncu 2026.3 appends `.ncu-repz` (2026.1: `.ncu-rep`); both load the same in ncu and the helpers. |
 
 The kernel is replayed dozens of times (one pass per metric group): seconds for a short kernel, minutes for a long one.
 
@@ -70,11 +74,11 @@ Per-PC stall sampling alone, a few passes. Use it after a code change, when only
 ncu --section SourceCounters \
     -k "regex:KERNEL_REGEX" \
     -c 1 \
-    -o "$PROFILE_RUN_DIR/reports/source_<tag>" \
+    -o "$PROFILE_RUN_DIR/reports/source_<tag>.ncu-rep" \
     ./harness [args]
 ```
 
-`extract_stall_hotspots.py` reads either this report or the full one. There is no `source` set in ncu 2026.1: `--set source` is not rejected, it silently collects the default `basic` set.
+`extract_stall_hotspots.py` reads either this report or the full one. There is no `source` set: `--set source` is not rejected, but it adds no section (`ncu --set source --list-metrics`: `No metrics to collect found in sections`), so only the sections you name are collected.
 
 ---
 
@@ -124,7 +128,7 @@ ncu --metrics \
     sm__cycles_elapsed.avg.per_second,\
     sm__throughput.avg.pct_of_peak_sustained_elapsed,\
     sm__warps_active.avg.pct_of_peak_sustained_active,\
-    dram__bytes_read.sum.pct_of_peak_sustained_elapsed,\
+    gpu__dram_throughput.avg.pct_of_peak_sustained_elapsed,\
     l1tex__t_sector_hit_rate.pct,\
     l1tex__t_sectors_pipe_lsu_mem_global_op_ld.sum,\
     l1tex__t_requests_pipe_lsu_mem_global_op_ld.sum \
@@ -141,11 +145,11 @@ Takes one or two replay passes. Prints a table directly to stdout. No `-o` outpu
 ```bash
 # Before
 ncu --set full -k "regex:my_kernel" -c 1 \
-    -o "$PROFILE_RUN_DIR/reports/v1" ./harness_v1 [args]
+    -o "$PROFILE_RUN_DIR/reports/v1.ncu-rep" ./harness_v1 [args]
 
 # After
 ncu --set full -k "regex:my_kernel" -c 1 \
-    -o "$PROFILE_RUN_DIR/reports/v2" ./harness_v2 [args]
+    -o "$PROFILE_RUN_DIR/reports/v2.ncu-rep" ./harness_v2 [args]
 ```
 
 Then use `analyze_reports.py` with multiple tags to produce a side-by-side comparison, or manually:
@@ -170,27 +174,29 @@ ncu --list-sets           # list all sets
 ncu --list-sections       # list all sections
 ```
 
-ncu 2026.1:
+ncu 2026.3:
 
 | Set | Sections included | Use when |
 |---|---|---|
 | `basic` (default) | LaunchStats, Occupancy, SpeedOfLight, WorkloadDistribution | Smoke test — is ncu working at all? |
 | `detailed` | basic + ComputeWorkloadAnalysis, MemoryWorkloadAnalysis (+ chart), SourceCounters, SpeedOfLight_RooflineChart, Tile | Middle ground |
-| `full` | everything above + InstructionStats, MemoryWorkloadAnalysis_Tables, NumaAffinity, Nvlink_Tables / _Topology, PmSampling, SchedulerStats, the hierarchical roofline charts, WarpStateStats | First-pass profile. Always start here. |
-| `pmsampling` | PmSampling, PmSampling_WarpStates | Timelines only |
+| `full` | everything above + InstructionStats, MemoryWorkloadAnalysis_Tables, NumaAffinity, Nvlink_Tables / _Topology, PmSampling, SchedulerStats, the hierarchical roofline charts, WarpStateStats, gr10x_UTCMMA_Inference / _Training | First-pass profile. Always start here. |
+| `pmsampling` | PmSampling, gr10x_UTCMMA_Inference, gr10x_UTCMMA_Training | Timelines only |
 | `roofline` | SpeedOfLight + the roofline charts, WorkloadDistribution | Roofline only |
 | `nvlink` | Nvlink, Nvlink_Tables, Nvlink_Topology | Multi-GPU traffic |
+
+ncu 2026.3 removed the `PmSampling_WarpStates` section of 2026.1 (`--section PmSampling_WarpStates` is an error there); the stall reasons over time come from the timed warp samples of SourceCounters instead (`plot_timeline.py`). With ncu 2026.1, add `--section PmSampling_WarpStates` for its stall-reason PM series.
 
 ---
 
 ## Common section additions
 
 ```bash
-# Stall-reason timelines (PmSampling itself is in --set full)
---section PmSampling_WarpStates
-
-# NVLink bandwidth (if profiling multi-GPU)
+# NVLink bandwidth (if profiling multi-GPU; Nvlink_Tables / _Topology are in --set full)
 --section Nvlink
+
+# Chip-to-chip link traffic (2026.3; on systems that have the link)
+--section C2CLink
 ```
 
 ---
@@ -201,7 +207,7 @@ If the kernel is called multiple times and you want different iterations:
 
 ```bash
 # Skip the first 5 invocations, then profile 3 consecutive launches
-ncu -k "regex:my_kernel" -s 5 -c 3 -o report ./harness
+ncu -k "regex:my_kernel" -s 5 -c 3 -o report.ncu-rep ./harness
 ```
 
 `-s N` skips the first N matches. `-c N` limits to N matches. Useful for ignoring warmup or focusing on a steady-state iteration. For a program that warms up first (JIT, autotuning), `--profile-from-start off` plus a profiler range around the call you want (`cudaProfilerStart/Stop`, `torch.cuda.profiler.start()/stop()`) profiles only that call.
@@ -213,7 +219,7 @@ A report with several launches holds one action per launch; the helpers analyze 
 ## GPU clocks
 
 ncu fixes the clock itself: it locks the GPU clock for every profiled kernel and restores it after, so durations and
-throughputs are comparable between runs. The default is `--clock-control boost` in ncu 2026.1 and `base` in older
+throughputs are comparable between runs. The default is `--clock-control boost` in ncu 2026.1–2026.3 and `base` in older
 versions (`ncu --help` shows it); on a B300, `base` (~1.07 GHz) made kernels ~1.7x slower than `boost` (~1.9 GHz).
 Name the setting in the command so the report says what it ran at. No outer lock is needed.
 
@@ -234,7 +240,7 @@ Read the clock a report ran at from `sm__cycles_elapsed.avg.per_second` (in `met
 ## Gotchas
 
 - **Profile run time blows up with `--set full`**: that's normal, each replay is a full kernel execution.
-- **`regex:...` doesn't match anything**: the regex matches the demangled name. Templates produce names like `void my_kernel<(int)8, (int)256>(...)`; list them with the survey (Recipe 0) or `cuobjdump -res-usage ./harness | grep Function | cu++filt`.
+- **`regex:...` doesn't match anything**: `-k` matches the kernel's function name by default (`--kernel-name-base function`): `my_kernel` for `void my_kernel<(int)8, (int)256>(float *)`. To tell template instances apart, add `--kernel-name-base demangled` and match the full name. List the names with the survey (Recipe 0) or `cuobjdump -res-usage ./harness | grep Function | cu++filt`.
 - **Report file is empty / 0 KB**: profile terminated before the kernel launched. Usually means `-k` regex didn't match, or the harness crashed.
 - **PM Sampling returns nothing**: check the report came from `--set full` (or `--section PmSampling`) and the GPU isn't a vGPU (vGPU doesn't support PM sampling). `plot_timeline.py --list` shows the series a report has.
 - **"Could not deploy stock section files to $HOME"**: set `HOME` to a writable directory first.

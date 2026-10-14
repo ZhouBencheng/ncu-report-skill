@@ -1,20 +1,26 @@
 #!/usr/bin/env python3
-"""ASCII-plot PM sampling timeseries from .ncu-rep files.
+"""ASCII-plot PM sampling timeseries and warp-state timelines from ncu reports.
 
 PM sampling metrics have per-instance values that form a time-ordered series
 across the kernel's execution. Plotting the series reveals tail effects,
 pipeline bubbles, and sawtooth patterns that are invisible in aggregate metrics.
 
 The series come from the PmSampling section (part of `--set full`), named
-`<UNIT>.<group>.<metric>` in ncu 2026.1, and the PmSampling_WarpStates section
-(`--section PmSampling_WarpStates`), named `pmsampling:smsp__warps_issue_stalled_*`.
-`--list` prints the series a report has.
+`<UNIT>.<group>.<metric>` (e.g. `TPC.TriageCompute.sm__cycles_active...`);
+`--list` prints the series a report has. With ncu_report 2026.3+ each series is
+aligned to the workload's timestamps.
 
-ncu collects the series over several replays of the kernel, and each replay has
-its own time base. Series of one replay share a time axis: they are plotted
-together, over the window where any of them is non-zero, so their shapes line
-up. Series of different replays do not line up sample for sample — compare
-their shapes, not positions.
+ncu collects the series over replays of the kernel, and each replay has its own
+time base. Series of one replay share a time axis: they are plotted together,
+over the window where any of them is non-zero, so their shapes line up. Series
+of different replays do not line up sample for sample — compare their shapes,
+not positions.
+
+The stall reasons over time come from the timed warp samples of the
+SourceCounters section (also in `--set full`): the share of samples in each time
+bucket per reason, over the span the kernel had warps resident. (Reports of ncu
+before 2026.3 may also have `pmsampling:smsp__warps_issue_stalled_*` series, from
+the PmSampling_WarpStates section; they are plotted as PM series.)
 
 Produces `<run-dir>/analysis/pm_timeline_<tag>.txt` per profiled kernel.
 
@@ -33,6 +39,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 from ncu_utils import (  # noqa: E402
     action_tags, kernel_name, pm_series, pm_series_names, select_actions,
+    warp_state_timeline,
 )
 
 
@@ -76,6 +83,18 @@ def ascii_plot(vals, label, max_rows=20, max_cols=80):
     return lines
 
 
+def _active_samples(group, n):
+    """Sample indices where the kernel runs: SM activity above 1% of its peak when the group has
+    it (memory series carry background noise for the whole capture), else where any series is
+    above 1% of its own peak."""
+    sm = [v for name, _, v in group if ".sm__cycles_active." in name]
+    if sm:
+        peak = max(x or 0 for x in sm[0]) or 1
+        return [i for i in range(n) if (sm[0][i] or 0) > 0.01 * peak]
+    peaks = [max(x or 0 for x in v) for _, _, v in group]
+    return [i for i in range(n) if any((v[i] or 0) > 0.01 * pk for (_, _, v), pk in zip(group, peaks) if pk)]
+
+
 def plot_replays(action, names, rows, cols):
     """Plot `names`, grouped by the replay (time base) each series was sampled in."""
     replays = {}
@@ -87,7 +106,7 @@ def plot_replays(action, names, rows, cols):
     for k, group in enumerate(replays.values()):
         ts = group[0][1]
         n = len(group[0][2])
-        active = [i for i in range(n) if any(v[i] for _, _, v in group)]
+        active = _active_samples(group, n)
         lo, hi = (active[0], active[-1] + 1) if active else (0, n)
         span = f", {(ts[hi - 1] - ts[lo]) / 1e3:.1f} us" if ts and hi - lo > 1 else ""
         interval = f", ~{(ts[-1] - ts[0]) / (len(ts) - 1) / 1e3:.3g} us/sample" if ts and len(ts) > 1 else ""
@@ -95,6 +114,20 @@ def plot_replays(action, names, rows, cols):
                    f"these {len(group)} series share this time axis -----")
         for name, _, vals in group:
             out.extend(ascii_plot(vals[lo:hi], name, rows, cols))
+    return out
+
+
+def plot_warp_states(action, rows, cols, top):
+    """The `top` most sampled stall reasons over the kernel's run, from its timed warp samples."""
+    result = warp_state_timeline(action, cols)
+    if result is None:
+        return []
+    span, shares = result
+    order = sorted(shares, key=lambda r: -sum(shares[r]))[:top]
+    out = [f"\n----- warp states over the kernel: share of the timed warp samples per reason, "
+           f"{span / 1e3:.1f} us (its own time axis) -----"]
+    for reason in order:
+        out.extend(ascii_plot(shares[reason], f"stall reason: {reason}", rows, cols))
     return out
 
 
@@ -106,8 +139,10 @@ def main():
     ap.add_argument("--metric", type=str, action="append", default=None,
                     help="Regex on series names (repeatable); replaces the default list.")
     ap.add_argument("--kernel", type=str, default=None,
-                    help="Regex on the demangled kernel name: keep only matching kernels.")
+                    help="Regex on the kernel's function or demangled name: keep only matching kernels.")
     ap.add_argument("--list", action="store_true", help="Print the series each report has and exit.")
+    ap.add_argument("--stall-reasons", type=int, default=6,
+                    help="How many of the most sampled stall reasons to plot over time (0: none).")
     ap.add_argument("--rows", type=int, default=20)
     ap.add_argument("--cols", type=int, default=80)
     args = ap.parse_args()
@@ -124,19 +159,27 @@ def main():
             print(f"[skip] {rep} not found", file=sys.stderr)
             continue
         _report, acts = select_actions(rep, args.kernel)
+        if not acts:
+            print(f"[skip] {rep}: no kernel matches {args.kernel!r}", file=sys.stderr)
+            continue
         for action, t in zip(acts, action_tags(tag, acts)):
             names = pm_series_names(action)
             if args.list:
                 print(f"[{t}] {len(names)} series")
                 print("\n".join(f"  {n}" for n in names))
                 continue
-            if not names:
-                print(f"[{t}] no PM sampling series: collect with --set full "
-                      f"(and --section PmSampling_WarpStates for stall timelines)", file=sys.stderr)
+            warp_states = plot_warp_states(action, args.rows, args.cols, args.stall_reasons) \
+                if args.stall_reasons else []
+            if not names and not warp_states:
+                print(f"[{t}] no PM sampling series or timed warp samples: collect with --set full",
+                      file=sys.stderr)
                 continue
-            out_lines = [f"{'=' * 60}\n{t}: {rep.name}\n{kernel_name(action, 'function')}\n{'=' * 60}"]
+            dur = action["gpu__time_duration.sum"].value() if "gpu__time_duration.sum" in action.metric_names() else None
+            dur = f" ({dur / 1e3:.1f} us, gpu__time_duration)" if dur else ""
+            out_lines = [f"{'=' * 60}\n{t}: {rep.name}\n{kernel_name(action, 'function')}{dur}\n{'=' * 60}"]
             chosen = [n for p in patterns for n in names if p.search(n)]
             out_lines.extend(plot_replays(action, list(dict.fromkeys(chosen)), args.rows, args.cols))
+            out_lines.extend(warp_states)
             out_path = analysis_dir / f"pm_timeline_{t}.txt"
             out_path.write_text("\n".join(out_lines) + "\n")
             print(f"[{t}] -> {out_path}")

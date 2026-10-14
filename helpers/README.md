@@ -54,6 +54,6 @@ python3 "$HELPERS/plot_timeline.py" --run-dir "$PROFILE_RUN_DIR" \
     --report "$PROFILE_RUN_DIR/reports/full_<tag1>.ncu-rep" --tag <tag1>
 ```
 
-All scripts take `--run-dir` and write under `<run-dir>/analysis/`. A report holding several kernels gives one output per kernel (`<tag>.<i>_<function>`); `--kernel REGEX` keeps the matching ones. None of them needs a GPU.
+The three report scripts take `--run-dir` and write under `<run-dir>/analysis/`. A report holding several kernels gives one output per kernel (`<tag>.<i>_<function>`); `--kernel REGEX` keeps the matching ones. None of them needs a GPU.
 
 `ncu_utils.py` finds `ncu_report` from the `ncu` on PATH, the way the CUDA toolkit's `ncu` launcher finds Nsight Compute. If `ncu` is not on PATH, put `<Nsight Compute install>/extras/python` on `PYTHONPATH`.

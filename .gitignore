@@ -20,5 +20,6 @@ __pycache__/
 
 # NCU scratch / profile outputs (users generate their own — never commit)
 *.ncu-rep
+*.ncu-repz
 *.ncu-proj
 ncu_home/

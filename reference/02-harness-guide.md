@@ -23,7 +23,7 @@ d=$(mktemp -d) && (cd "$d" && cuobjdump -xelf all "$(realpath path/to/binary_or_
 for c in "$d"/*.cubin; do echo "$c: $(nvdisasm -g "$c" | grep -c '//## File') line records"; done
 ```
 
-Zero line records: no line info, so build a harness. Also note which architectures the cubins are for (`<name>.sm_100a.cubin`, `.sm_103a.cubin`, ...): a library that ships only one cannot run on the other.
+Zero line records: no line info, so build a harness. Also note which architectures the cubins are for (`<name>.sm_100a.cubin`, `.sm_103a.cubin`, ...): a cubin built for one architecture (`sm_100a`) does not run on another (`sm_103a`) unless the library also ships family-wide cubins (`sm_100f`) or PTX that the driver can compile.
 
 To list the kernels a binary holds: `cuobjdump -res-usage <binary> | grep Function` (mangled names; pipe through `cu++filt` to demangle).
 
@@ -46,8 +46,8 @@ torch.cuda.profiler.stop()
 ```
 
 ```bash
-ncu --profile-from-start off --set full --section PmSampling_WarpStates --import-source yes \
-    -k "regex:KERNEL" -c 1 -o "$PROFILE_RUN_DIR/reports/full_<tag>" python3 "$PROFILE_RUN_DIR/harness/driver.py"
+ncu --profile-from-start off --set full --import-source yes \
+    -k "regex:KERNEL" -c 1 -o "$PROFILE_RUN_DIR/reports/full_<tag>.ncu-rep" python3 "$PROFILE_RUN_DIR/harness/driver.py"
 ```
 
 Keep the driver in the run's `harness/`. Without the profiler range, `-k "regex:KERNEL" -s <warm-up launches> -c 1` skips the warm-up launches instead.

@@ -1,6 +1,6 @@
-# Metric Name Reference (Blackwell, ncu 2026.1)
+# Metric Name Reference (Blackwell, ncu 2026.3)
 
-Metric names change between GPU generations and Nsight Compute releases, and many older docs use names that `--set full` does not collect on Blackwell. This doc lists the names a `--set full` report holds with Nsight Compute 2026.1 on B200 / B300 (sm_100 / sm_103), and what to use instead of the older names.
+Metric names change between GPU generations and Nsight Compute releases, and many older docs use names that `--set full` does not collect on Blackwell. This doc lists the names a `--set full` report holds with Nsight Compute 2026.3 (and 2026.1, where the PM-sampling names below differ) on B200 / B300 (sm_100 / sm_103), and what to use instead of the older names.
 
 If a metric returns `None` on your kernel, first check this doc, then enumerate the names the report has:
 
@@ -14,7 +14,7 @@ A name missing from a report may still exist: no section collects it. Ask for it
 
 ## Names older docs use
 
-| Older name | In a `--set full` report (ncu 2026.1) |
+| Older name | In a `--set full` report (ncu 2026.3) |
 |---|---|
 | `smsp__inst_executed_op_global_ld.sum` | use **`smsp__sass_inst_executed_op_global_ld.sum`**; the old name exists, collect it with `--metrics` |
 | `smsp__inst_executed_op_global_st.sum` | **`smsp__sass_inst_executed_op_global_st.sum`** |
@@ -32,7 +32,7 @@ A name missing from a report may still exist: no section collects it. Ask for it
 
 ## Curated metric set
 
-A `--set full` report holds these on B200 / B300 with Nsight Compute 2026.1. Always verify for your specific ncu version by enumerating with `action.metric_names()` — NVIDIA occasionally renames metrics between releases.
+A `--set full` report holds these on B200 / B300 with Nsight Compute 2026.3 and 2026.1. Always verify for your specific ncu version by enumerating with `action.metric_names()` — NVIDIA occasionally renames metrics between releases.
 
 ### Launch geometry / occupancy
 ```
@@ -110,7 +110,11 @@ sm__pipe_tensor_cycles_active.avg.pct_of_peak_sustained_elapsed
 sm__pipe_tensor_subpipe_hmma_cycles_active.avg.pct_of_peak_sustained_elapsed
 sm__pipe_tensor_subpipe_imma_cycles_active.avg.pct_of_peak_sustained_elapsed
 sm__pipe_tensor_subpipe_dmma_cycles_active.avg.pct_of_peak_sustained_elapsed    # absent on B300 (no FP64 MMA)
-sm__ops_path_tensor_op_hmma_src_bf16_dst_fp32_sparsity_off.avg   # raw BF16→FP32 tensor ops
+sm__ops_path_tensor_op_hmma_src_bf16_dst_fp32_sparsity_off.avg   # raw BF16→FP32 tensor ops, warp-level mma (HMMA)
+sm__ops_path_tensor_op_utchmma_src_bf16_dst_fp32_sparsity_off.avg.pct_of_peak_sustained_elapsed   # the same for tcgen05 (UTC) MMA
+sm__ops_path_tensor_src_bf16_dst_fp32.avg                         # BF16→FP32 tensor ops, any path
+sm__mem_tensor_cycles_active.avg.pct_of_peak_sustained_elapsed    # TMEM busy
+smsp__sass_inst_executed_op_utcmma.sum                            # tcgen05.mma instructions
 ```
 
 ### Cache hit rates
@@ -198,10 +202,11 @@ TPC.TriageCompute.sm__pipe_tensor_cycles_active_realtime.avg.pct_of_peak_sustain
 TPC.TriageCompute.sm__pipe_fma_cycles_active_realtime.avg.pct_of_peak_sustained_elapsed
 FBSP.TriageCompute.dram__throughput.avg.pct_of_peak_sustained_elapsed
 LTS.TriageCompute.lts__throughput.avg.pct_of_peak_sustained_elapsed
-SM_A.TriageCompute.l1tex__throughput.avg.pct_of_peak_sustained_elapsed
+SM_A.TriageCompute.sm__mem_tensor_cycles_active_realtime.avg.pct_of_peak_sustained_elapsed
+SM_A.TriageCompute.l1tex__throughput.avg.pct_of_peak_sustained_elapsed    # 2026.1 only
 ```
 
-The PmSampling_WarpStates section (`--section PmSampling_WarpStates`) gives the stall-reason series:
+ncu 2026.3 has no stall-reason PM series: the stall reasons over time come from the timed warp samples (`action.timed_warp_samples()`, SourceCounters section), which `plot_timeline.py` plots. ncu 2026.1's PmSampling_WarpStates section (`--section PmSampling_WarpStates`, removed in 2026.3) gave them as series:
 ```
 pmsampling:smsp__warps_issue_stalled_long_scoreboard.avg
 pmsampling:smsp__warps_issue_stalled_short_scoreboard.avg
