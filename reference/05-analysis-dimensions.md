@@ -5,7 +5,7 @@ Every kernel profile report is ambiguous until you look at it through specific l
 For each dimension this doc describes:
 
 - **What you're answering**
-- **Which metrics to read** (B200 / sm_100 names)
+- **Which metrics to read** (Blackwell names, ncu 2026.1)
 - **How to read them** (what's "normal", what's "bad")
 - **Which `helpers/` to run**
 
@@ -101,7 +101,7 @@ avg = sum(work_per_cta) / len(work_per_cta)
 print(f"max/avg = {max(work_per_cta)/avg:.2f}x, max/min = {max(work_per_cta)/min(work_per_cta):.2f}x")
 ```
 
-Ratios > 5x indicate significant potential for tail effect.
+Ratios > 5x indicate significant potential for tail effect. A lower ratio does not rule one out: when the longest CTAs start late (in a later wave, or behind short ones), even max/avg ~2x can leave a third of the SMs idle at the end. Judge it from the per-SM active cycles, the SM-activity timeline and the launch order, not from the ratio alone.
 
 ---
 
@@ -124,7 +124,7 @@ smsp__average_warps_issue_stalled_dispatch_stall_per_issue_active.ratio
 smsp__average_warps_issue_stalled_no_instruction_per_issue_active.ratio
 ```
 
-**Per-line stall metrics (from `--set source`):**
+**Per-line stall metrics (SourceCounters section, in `--set full`):**
 ```
 smsp__pcsamp_sample_count                                  # total samples
 smsp__pcsamp_warps_issue_stalled_long_scoreboard           # per-PC counts
@@ -163,6 +163,12 @@ smsp__pcsamp_warps_issue_stalled_selected                  # productive cycles
 
 **Helper:** `extract_stall_hotspots.py` produces `stall_hotspots_<tag>.txt` which ranks source lines by total stall samples. This directly points at the offending `LDG`, `BAR.SYNC`, or compute op in source.
 
+**Reading per-line samples:**
+
+- A sample records the PC of the instruction the warp is waiting to issue. A wait *at* a barrier (`BAR.SYNC`, an mbarrier try-wait loop) is therefore charged to the instruction after it, often on the next source line; look one instruction back (`ncu --import ... --page source --print-source sass`) before blaming a line.
+- In warp-specialized kernels (producer/consumer roles), warps that idle by design — a load or store warp sleeping or waiting at a barrier until its next tile — collect many `sleeping` / `barrier` samples without being on the critical path. Rank the lines of the warps that do the work (the compute loop) separately.
+- For inlined CUTLASS/CuTe code, rank by the kernel's own lines (`--binary`, see `09-common-issues.md`).
+
 ---
 
 ## Dimension 4 — Tensor Core utilization
@@ -175,7 +181,7 @@ sm__pipe_tensor_cycles_active.avg.pct_of_peak_sustained_elapsed      # overall T
 sm__pipe_tensor_cycles_active.avg.pct_of_peak_sustained_active       # per active SM cycle
 sm__pipe_tensor_subpipe_hmma_cycles_active.avg.pct_of_peak_sustained_elapsed  # BF16/FP16 MMA
 sm__pipe_tensor_subpipe_imma_cycles_active.avg.pct_of_peak_sustained_elapsed  # INT MMA
-sm__pipe_tensor_subpipe_dmma_cycles_active.avg.pct_of_peak_sustained_elapsed  # FP64 MMA
+sm__pipe_tensor_subpipe_dmma_cycles_active.avg.pct_of_peak_sustained_elapsed  # FP64 MMA (absent on B300)
 sm__ops_path_tensor_op_hmma_src_bf16_dst_fp32_sparsity_off.avg       # BF16×BF16→FP32 ops
 ```
 
@@ -197,9 +203,9 @@ sm__ops_path_tensor_op_hmma_src_bf16_dst_fp32_sparsity_off.avg       # BF16×BF1
 
 **Metrics (PM sampling, time-series):**
 ```
-pmsampling:sm__throughput.avg.pct_of_peak_sustained_elapsed
-pmsampling:sm__warps_active.avg.pct_of_peak_sustained_active
-pmsampling:dram__throughput.avg.pct_of_peak_sustained_elapsed
+TPC.TriageCompute.sm__cycles_active.avg.per_cycle_elapsed
+TPC.TriageCompute.sm__inst_executed_realtime.avg.per_cycle_active
+FBSP.TriageCompute.dram__throughput.avg.pct_of_peak_sustained_elapsed
 pmsampling:smsp__warps_issue_stalled_long_scoreboard.avg
 pmsampling:smsp__warps_issue_stalled_short_scoreboard.avg
 ```
@@ -214,7 +220,7 @@ pmsampling:smsp__warps_issue_stalled_short_scoreboard.avg
 
 **Helper:** `plot_timeline.py` — renders ASCII plots. Look at multiple series side-by-side (SM throughput + DRAM throughput + long_scoreboard stalls) to distinguish the shapes.
 
-**Note:** PM sampling has ~2µs interval on B200. Very short kernels (< 20 µs) produce few samples — interpret with care.
+**Note:** the PM sampling interval was ~1 µs on a B300 (`plot_timeline.py` prints it per series). Very short kernels (< 20 µs) produce few samples — interpret with care. Series names: `08-metric-names.md`; `plot_timeline.py --list` shows a report's.
 
 ---
 

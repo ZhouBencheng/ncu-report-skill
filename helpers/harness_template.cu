@@ -2,13 +2,14 @@
 // harness_template.cu — starting point for a profiling harness.
 //
 // Copy this file into your run directory, e.g.:
-//     profile/<run_name>/harness/my_kernel_harness.cu
+//     $PROFILE_RUN_DIR/harness/my_kernel_harness.cu
 // and customize the sections marked with TODO(you).
 //
 // Compile with:
-//     nvcc -O2 -std=c++17 -lineinfo \
-//          -gencode=arch=compute_100,code=sm_100 \
+//     nvcc -O2 -std=c++17 -lineinfo -arch=sm_100a \
 //          my_kernel_harness.cu -o my_kernel_harness
+//     (sm_100a: B200; sm_103a: B300 — the GPU's compute capability, see
+//      ../reference/02-harness-guide.md)
 //
 // Usage modes this template supports:
 //     ./harness --workload <path.safetensors>        # real tensor values

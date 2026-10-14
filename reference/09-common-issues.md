@@ -26,6 +26,16 @@ sudo update-initramfs -u
 setting above, or the container started with `--cap-add SYS_ADMIN`). Report the error to them instead of working
 around it.
 
+## ncu warnings
+
+### `Unable to access the following 6 metrics: ctc__rx_bytes_data_user.sum, ...`
+
+Harmless. The `ctc__*` metrics count chip-to-chip (C2C) link traffic; a system without that link cannot collect them, and `--set full` asks for them anyway.
+
+### `No source files were imported` / `Failed to import the following source files`
+
+`--import-source yes` reads the source where ncu runs, at collection time, from the paths the build recorded (`ncu --import ... --page source` shows them). If those paths do not exist there — a prebuilt library, a build directory that is gone, a GPU job in another container — fetch the matching source somewhere ncu can see and pass `--source-folders` (searched recursively), then collect again: the source cannot be added to an existing report. A kernel without line info has no source to import.
+
 ### `Could not deploy stock section files to "/home/USER/Documents/NVIDIA Nsight Compute/..."`
 
 Set `HOME` to a writable directory:
@@ -42,9 +52,9 @@ This warning is harmless but noisy. ncu falls back to reading from the CUDA inst
 
 1. **Use the demangled name.** Templates produce something like `void my_kernel<(int)8, (int)256>(...)`. Check:
    ```bash
-   cuobjdump --dump-function-names ./my_harness
+   cuobjdump -res-usage ./my_harness | grep Function | cu++filt
    ```
-   Match against the visible string.
+   Match against the visible string, or run the survey (`03-collection.md`, Recipe 0), which lists each launch's demangled name.
 2. **Escape regex metacharacters.** `<` and `>` don't need escaping in most regex flavors, but be careful with parentheses.
 3. **The kernel might not have been launched.** Run the harness without ncu and confirm the kernel actually runs.
 
@@ -66,18 +76,24 @@ For JIT / framework-integrated builds:
 
 ---
 
+## Source view shows only CUTLASS / CuTe / library headers
+
+ncu maps each PC to its **innermost** inlined frame. In template-heavy code nearly every instruction is inlined from a library header (`mma_sm80.hpp` for every HMMA, `barrier.h` for every mbarrier wait), so the hottest "lines" are the same headers for every kernel. Pass the profiled binary (executable, `.so` or cubin) to `extract_stall_hotspots.py --binary`: it reads the full inline chain with `nvdisasm -gi` and ranks the lines in the kernel function itself. It reports how many sampled PCs' SASS matched the report; a mismatch means the binary is not the one that was profiled.
+
+---
+
 ## PM sampling returns nothing
 
-1. **You didn't request it.** Add `--section PmSampling --section PmSampling_WarpStates` to the ncu invocation.
+1. **You didn't request it.** `--set full` includes the PmSampling section; add `--section PmSampling_WarpStates` for the stall-reason timelines.
 2. **vGPU / MIG environment.** PM sampling isn't supported under virtualization. Use metric-based (non-timeline) analysis only.
 3. **Kernel too short.** Kernels under ~20 µs produce few PM samples; what comes back is dominated by warmup noise.
-4. **Specific PM metric just isn't available on your GPU / driver / ncu combination.** Some `pmsampling:sm__throughput.*` or `pmsampling:dram__throughput.*` variants may return empty instance arrays even when other `pmsampling:smsp__warps_issue_stalled_*` series work fine on the same report. Always check `m.num_instances() > 0`; if the SM/DRAM timeline is empty, the stall-reason timelines are a reliable proxy.
+4. **You asked for a name the report does not have.** ncu 2026.1 names the PmSampling series `<UNIT>.<group>.<metric>` (e.g. `TPC.TriageCompute.sm__cycles_active.avg.per_cycle_elapsed`); `pmsampling:sm__throughput.*` and `pmsampling:dram__throughput.*` from older docs do not exist. `plot_timeline.py --list` prints what the report has.
 
 ---
 
 ## ncu takes forever to finish
 
-1. **`--set full` needs 45+ replay passes.** That's normal — each pass reruns the kernel for a different metric group. If your kernel takes 3 ms, full profile takes ~15 s; 3 ms → 300 ms kernels are miserable. Mitigation: profile a smaller representative workload if possible.
+1. **`--set full` needs dozens of replay passes.** That's normal — each pass reruns the kernel for a different metric group. If your kernel takes 3 ms, full profile takes ~15 s; 3 ms → 300 ms kernels are miserable. Mitigation: profile a smaller representative workload if possible.
 2. **Kernel launches aren't isolated.** If your binary does other expensive work (data loading, CUDA context init) before every kernel launch, that runs on every replay too. Move it outside the profile window (ncu only profiles kernel launches matching `-k`).
 3. **Don't use `-G` (debug).** It regresses performance ~100× and is useless for perf profiling.
 
@@ -92,8 +108,8 @@ For JIT / framework-integrated builds:
 
 ## Metric returns `None`
 
-1. **Wrong metric name.** See `08-b200-metric-names.md`. Many stock docs use names that don't exist on B200.
-2. **Metric not in the collected sections.** Add the relevant `--section` or `--set`.
+1. **Wrong metric name.** See `08-metric-names.md`. Many stock docs use names `--set full` does not collect on Blackwell.
+2. **Metric not in the collected sections.** Add the relevant `--section` or `--set`, or ask for it with `--metrics` (some metrics are in no section).
 3. **Value is legitimately missing.** Some metrics (like tensor pipe counters) return 0 rather than None when the feature wasn't used; but others return None for hardware not present.
 
 Always wrap metric reads in a helper that returns a default:
@@ -109,14 +125,13 @@ def safe(action, name, default=None):
 
 ## `ncu_report` import fails
 
+`ncu_report.py` ships in `<Nsight Compute install>/extras/python`. The helpers find the install from the `ncu` on PATH, as the CUDA toolkit's `ncu` launcher does (`/opt/nvidia/nsight-compute/<version>` for .deb/.rpm installs, `<toolkit>/nsight-compute-<version>` for .run installs; the newest wins):
+
 ```bash
-find /usr/local/cuda* -name "ncu_report*" -type f 2>/dev/null
-# e.g. /usr/local/cuda-13.2/nsight-compute-2026.1.0/extras/python/ncu_report.py
-export PYTHONPATH=$PYTHONPATH:/usr/local/cuda-13.2/nsight-compute-2026.1.0/extras/python
-python3 -c "import ncu_report; print('OK')"
+python3 <skill>/helpers/ncu_utils.py      # prints where it found ncu_report, or why not
 ```
 
-If there's still an `ImportError`, check that the module is compatible with your Python version. The `_ncu_report*.so` compiled extension alongside `ncu_report.py` is built for one specific Python version.
+If `ncu` is not on PATH or the install is elsewhere, put its `extras/python` on `PYTHONPATH` yourself. If there's still an `ImportError`, check that the module is compatible with your Python version.
 
 ---
 
@@ -134,7 +149,7 @@ If there's still an `ImportError`, check that the module is compatible with your
 
 ### "The Python benchmarking script runs but ncu sees no matching kernel"
 
-`-k "regex:..."` must match the demangled name. TVM-FFI wraps kernels in `__global__ void kernel(...)` with a fixed name — check with `cuobjdump --dump-function-names <path to .so>`.
+`-k "regex:..."` must match the demangled name. TVM-FFI wraps kernels in `__global__ void kernel(...)` with a fixed name — list them with `cuobjdump -res-usage <path to .so> | grep Function` (mangled; `cu++filt` demangles), or run the survey in `03-collection.md`.
 
 ---
 
@@ -179,7 +194,7 @@ ncu handles CUDA Graph launches fine — each captured kernel shows up as a sepa
 ### "`sm__throughput = X%`, is that good?"
 
 It depends on the kernel type:
-- GEMM / matmul: should be 50%+ on B200. Below 30% is bad.
+- GEMM / matmul: should be 50%+ on B200 / B300. Below 30% is bad.
 - Element-wise / reduction: usually 10-30%, because they're DRAM-BW-bound.
 - Attention / recurrence kernels: varies wildly; compare against a reference implementation.
 
@@ -187,8 +202,9 @@ Always check Speed-of-Light alongside: `dram__bytes_read.sum.pct_of_peak_sustain
 
 ### "The details page says `Est. Speedup: X%` — is that reliable?"
 
-Yes, mostly. NCU's rule engine does a reasonable job estimating individual rule impact. Caveats:
+It is a good pointer to where to look, and often in the right ballpark — but check each estimate against the counters it rests on before ranking by it. Caveats:
 
 - The sum of all `Est. Speedup`s is usually > 100%, because rules overlap (fixing A might also help B). Don't add them.
 - Rules are per-pattern; the rule engine doesn't know which one is hardest/easiest to fix in your codebase.
+- Some estimates can be far off: a "small grid" estimate assumes the work spreads perfectly over more CTAs; a shared-memory bank-conflict estimate can rest on inconsistent wavefront counters; an L2-compression estimate applies only to data that could be compressed; an "uncoalesced loads" finding can be a scalar broadcast load. Confirm with the source counters (`stall_hotspots_<tag>.txt`) and the raw metrics.
 - Use `Est. Speedup: X%` to rank patterns by magnitude; use your judgement for ease of implementation.

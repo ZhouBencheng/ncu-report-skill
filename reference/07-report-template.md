@@ -12,11 +12,12 @@ Save as `$PROFILE_RUN_DIR/REPORT.md`.
 # `<kernel_name>` Profiling Report
 
 **Kernel:** `<exact kernel name or template instantiation>`
-**Target GPU:** NVIDIA B200 (148 SM, CC 10.0)   (or whatever is actually being profiled)
-**Nsight Compute:** 2026.x.x
-**Compile flags:** `nvcc -O2 -std=c++17 -lineinfo -gencode=arch=compute_100,code=sm_100`
+**Target GPU:** NVIDIA B300 (148 SM, CC 10.3)   (whatever is actually being profiled: `nvidia-smi --query-gpu=name,compute_cap --format=csv`)
+**Nsight Compute:** 2026.x.x (`ncu --version`)
+**Clock:** `--clock-control boost`, SM at X.XX GHz (`sm__cycles_elapsed.avg.per_second`)
+**Compile flags:** `nvcc -O2 -std=c++17 -lineinfo -arch=sm_103a`   (or: the prebuilt library profiled, and that it has line info)
 **Profile date:** YYYY-MM-DD
-**Run directory:** `profile/<run_name>/`
+**Run directory:** `<profile_root>/<run_name>/`
 
 ---
 
@@ -24,31 +25,25 @@ Save as `$PROFILE_RUN_DIR/REPORT.md`.
 
 > How exactly did we get these numbers? Required for reproducibility.
 
-- Harness: `profile/<run_name>/harness/*.cu` — what it is (standalone driver / the original binary / something else). Why.
+- Harness: `harness/*` — what it is (standalone harness / a driver calling the real library / the original binary). Why.
 - Workloads: which real tensors / shapes were used. Cite the workload UUID or shape tuple.
 - Dispatch paths covered: list each `(SF / template params, grid, block)` combination profiled.
-- Metric-name caveats: any metric names that differ from stock NCU docs (common on B200 / sm_100).
+- Metric-name caveats: any metric names that differ from stock NCU docs (see `08-metric-names.md`).
 
 Minimal runnable command listing:
 
     # Compile
-    nvcc -O2 -std=c++17 -lineinfo -gencode=arch=compute_100,code=sm_100 harness.cu -o harness
+    nvcc -O2 -std=c++17 -lineinfo -arch=sm_103a harness.cu -o "$PROFILE_RUN_DIR/harness/harness"
 
-    # Profile (full + PM)
-    ncu --set full --section PmSampling --section PmSampling_WarpStates \
+    # Profile (full: SOL, source counters, PM sampling + warp-state timelines)
+    ncu --set full --section PmSampling_WarpStates --import-source yes \
         -k "regex:<kernel_regex>" -c 1 \
-        -o profile/<run_name>/reports/full_<tag> \
-        profile/<run_name>/harness/harness [args]
-
-    # Profile (source-level)
-    ncu --set source --section SourceCounters \
-        -k "regex:<kernel_regex>" -c 1 \
-        -o profile/<run_name>/reports/source_<tag> \
-        profile/<run_name>/harness/harness [args]
+        -o "$PROFILE_RUN_DIR/reports/full_<tag>" \
+        "$PROFILE_RUN_DIR/harness/harness" [args]
 
 ### Artifacts
 
-    profile/<run_name>/
+    <run_name>/
     ├── REPORT.md                       ← this file
     ├── harness/...                     ← standalone harness
     ├── reports/                        ← raw .ncu-rep files (re-openable with ncu-ui)
@@ -65,7 +60,7 @@ Minimal runnable command listing:
 | **Duration** | X µs | Y µs | `gpu__time_duration.sum` |
 | SM throughput (% peak) | X% | Y% | `sm__throughput.avg.pct_of_peak_sustained_elapsed` |
 | Memory throughput (% peak) | X% | Y% | `gpu__compute_memory_throughput.avg.pct_of_peak_sustained_elapsed` |
-| DRAM throughput (% peak) | X% | Y% | `dram__bytes_read.sum.pct_of_peak_sustained_elapsed` |
+| DRAM throughput (% peak, reads + writes) | X% | Y% | `gpu__dram_throughput.avg.pct_of_peak_sustained_elapsed` |
 | L1 hit rate | X% | Y% | `l1tex__t_sector_hit_rate.pct` |
 | L2 hit rate | X% | Y% | `lts__t_sector_hit_rate.pct` |
 | Tensor Core usage | X% | Y% | `sm__pipe_tensor_cycles_active.*` |
@@ -100,7 +95,7 @@ Minimal runnable command listing:
 <sectors/request, L1/L2 hits, DRAM throughput, store efficiency, register spill>
 
 ### 2.7 Additional findings
-<items from NCU rule engine not otherwise mentioned — each with the rule's `Est. Speedup: X%`>
+<items from NCU rule engine not otherwise mentioned — each with the rule's `Est. Speedup: X%`, and whether the counters bear it out>
 
 ---
 
@@ -149,8 +144,8 @@ Minimal runnable command listing:
 
 ## 6. Reproduction
 
-    cd /abs/path/to/repo
-    export PROFILE_RUN_DIR=profile/<run_name>
+    # from the repo root
+    export PROFILE_RUN_DIR=<profile_root>/<run_name>
     <one-block runnable script that builds the harness, runs ncu, and parses>
 ```
 
@@ -160,7 +155,7 @@ Minimal runnable command listing:
 
 - **Cite specific metric values for every claim.** "SM throughput X.X%" (with the actual number from your report) > "SM throughput is low".
 - **Name files and line numbers.** "Line L of `harness.cu`" (pasting the actual file/line) > a high-level description like "the main memory load".
-- **Use NCU's own estimates.** Rule-engine `Est. Speedup: X%` numbers are usually in the right ballpark — use them instead of guessing.
+- **Use NCU's own estimates, checked.** Rule-engine `Est. Speedup: X%` numbers are a starting point — check each against the counters it rests on (small-grid, bank-conflict and L2-compression estimates can be far off), and say when you overrule one.
 - **Rank by magnitude.** Fix the 50% problem before the 5% problem.
 - **Keep the top-line summary dense.** A reader should be able to get the #1 finding in 10 seconds of reading.
 - **Link to artifacts.** Don't paste huge tables into the prose — link to `analysis/compare_<tag1>_vs_<tag2>.txt` etc.

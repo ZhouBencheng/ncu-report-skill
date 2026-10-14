@@ -1,35 +1,38 @@
-# B200 (sm_100) Metric Name Reference
+# Metric Name Reference (Blackwell, ncu 2026.1)
 
-The stock `ncu_profile_skill.md` in older docs references metric names that **don't exist on B200 / sm_100**. This doc lists the actual names available in Nsight Compute 2026.1 on B200 and flags which names are different from older GPUs.
+Metric names change between GPU generations and Nsight Compute releases, and many older docs use names that `--set full` does not collect on Blackwell. This doc lists the names a `--set full` report holds with Nsight Compute 2026.1 on B200 / B300 (sm_100 / sm_103), and what to use instead of the older names.
 
-If a metric returns `None` on your kernel, first check this doc, then enumerate available names:
+If a metric returns `None` on your kernel, first check this doc, then enumerate the names the report has:
 
 ```python
 action.metric_names()
 ```
 
+A name missing from a report may still exist: no section collects it. Ask for it with `--metrics name1,name2` (`03-collection.md`, Recipe 5).
+
 ---
 
-## Metric names that changed
+## Names older docs use
 
-| Stock skill name (older GPU) | B200 / sm_100 name |
+| Older name | In a `--set full` report (ncu 2026.1) |
 |---|---|
-| `smsp__inst_executed_op_global_ld.sum` | **`smsp__sass_inst_executed_op_global_ld.sum`** |
+| `smsp__inst_executed_op_global_ld.sum` | use **`smsp__sass_inst_executed_op_global_ld.sum`**; the old name exists, collect it with `--metrics` |
 | `smsp__inst_executed_op_global_st.sum` | **`smsp__sass_inst_executed_op_global_st.sum`** |
 | `smsp__inst_executed_op_local_ld.sum` | **`smsp__sass_inst_executed_op_local_ld.sum`** |
 | `smsp__inst_executed_op_local_st.sum` | **`smsp__sass_inst_executed_op_local_st.sum`** |
 | `smsp__inst_executed_op_shared_ld.sum` | **`smsp__sass_inst_executed_op_shared_ld.sum`** |
 | `smsp__inst_executed_op_shared_st.sum` | **`smsp__sass_inst_executed_op_shared_st.sum`** |
-| `l1tex__average_t_sectors_per_request_pipe_lsu_mem_global_op_ld.ratio` | (not available directly; compute from `l1tex__t_sectors_pipe_lsu_mem_global_op_ld.sum / l1tex__t_requests_pipe_lsu_mem_global_op_ld.sum`) |
-| `dram__bytes.sum` | (not directly; use `dram__bytes_read.sum + dram__bytes_write.sum`) |
-| `sm__inst_executed_pipe_fmaheavy.*` | *not present on B200* — use `sm__inst_executed_pipe_fma.*` instead |
+| `l1tex__average_t_sectors_per_request_pipe_lsu_mem_global_op_ld.ratio` | not collected: compute `l1tex__t_sectors_pipe_lsu_mem_global_op_ld.sum / l1tex__t_requests_pipe_lsu_mem_global_op_ld.sum`, or request it with `--metrics` |
+| `dram__bytes.sum` | not collected: use `dram__bytes_read.sum + dram__bytes_write.sum`, or request it with `--metrics` |
+| `sm__inst_executed_pipe_fmaheavy.*` | not collected: `sm__inst_executed_pipe_fma.*` is; request it with `--metrics` |
 | `smsp__warps_issue_stalled_<reason>_per_issue_active.pct` | **`smsp__average_warps_issue_stalled_<reason>_per_issue_active.ratio`** (note `average_` prefix and `ratio` suffix) |
+| `pmsampling:sm__throughput.*`, `pmsampling:dram__throughput.*`, `pmsampling:sm__warps_active.*`, `pmsampling:l1tex__throughput.*` | the PmSampling section's series are `<UNIT>.<group>.<metric>`: see "PM sampling" below |
 
 ---
 
-## Canonical sm_100 metric set (curated)
+## Curated metric set
 
-These metric names have been confirmed to exist and return meaningful values on B200 / sm_100 with Nsight Compute 2026.1. Always verify for your specific ncu version by enumerating with `action.metric_names()` — NVIDIA occasionally renames metrics between releases.
+A `--set full` report holds these on B200 / B300 with Nsight Compute 2026.1. Always verify for your specific ncu version by enumerating with `action.metric_names()` — NVIDIA occasionally renames metrics between releases.
 
 ### Launch geometry / occupancy
 ```
@@ -69,9 +72,10 @@ dram__sectors_read.sum
 dram__sectors_write.sum
 ```
 
-### Timing
+### Timing and clock
 ```
 gpu__time_duration.sum                                # units: ns (check .unit())
+sm__cycles_elapsed.avg.per_second                     # the SM clock the kernel ran at (see --clock-control)
 smsp__cycles_active.avg
 smsp__issue_active.avg.per_cycle_active               # issue rate per scheduler
 smsp__issue_active.avg.pct_of_peak_sustained_active
@@ -105,7 +109,7 @@ sm__pipe_tensor_cycles_active.avg.pct_of_peak_sustained_active
 sm__pipe_tensor_cycles_active.avg.pct_of_peak_sustained_elapsed
 sm__pipe_tensor_subpipe_hmma_cycles_active.avg.pct_of_peak_sustained_elapsed
 sm__pipe_tensor_subpipe_imma_cycles_active.avg.pct_of_peak_sustained_elapsed
-sm__pipe_tensor_subpipe_dmma_cycles_active.avg.pct_of_peak_sustained_elapsed
+sm__pipe_tensor_subpipe_dmma_cycles_active.avg.pct_of_peak_sustained_elapsed    # absent on B300 (no FP64 MMA)
 sm__ops_path_tensor_op_hmma_src_bf16_dst_fp32_sparsity_off.avg   # raw BF16→FP32 tensor ops
 ```
 
@@ -158,7 +162,7 @@ smsp__average_warps_issue_stalled_misc_per_issue_active.ratio
 smsp__average_warps_issue_stalled_selected_per_issue_active.ratio       # productive (= 1.0)
 ```
 
-### Stall reasons — per-PC (requires `--set source --section SourceCounters`)
+### Stall reasons — per-PC (SourceCounters section; in `--set full`)
 ```
 smsp__pcsamp_sample_count                                           # total sample count
 smsp__pcsamp_warps_issue_stalled_long_scoreboard                    # per-PC counts
@@ -176,45 +180,54 @@ smsp__pcsamp_warps_issue_stalled_no_instructions
 smsp__pcsamp_warps_issue_stalled_selected
 smsp__pcsamp_warps_issue_stalled_branch_resolving
 smsp__pcsamp_warps_issue_stalled_membar
+smsp__pcsamp_warps_issue_stalled_sleeping
+smsp__pcsamp_warps_issue_stalled_misc
+smsp__pcsamp_warps_issue_stalled_tex_throttle
+smsp__pcsamp_warps_issue_stalled_<reason>_not_issued                # samples where the warp's scheduler issued nothing
 ```
 
-Each of these has `num_instances() > 0` with `correlation_ids()` that map to PCs. Use `action.source_info(pc)` to map PCs to `(file, line)`.
+Each of these has `num_instances() > 0` with `correlation_ids()` that map to PCs. Use `action.source_info(pc)` to map PCs to `(file, line)` (innermost inlined frame; see `04-python-api.md`).
 
 ### PM sampling (time series)
+
+The PmSampling section (in `--set full`) gives `<UNIT>.<group>.<metric>` series, e.g.:
+```
+TPC.TriageCompute.sm__cycles_active.avg.per_cycle_elapsed
+TPC.TriageCompute.sm__inst_executed_realtime.avg.per_cycle_active
+TPC.TriageCompute.sm__pipe_tensor_cycles_active_realtime.avg.pct_of_peak_sustained_elapsed
+TPC.TriageCompute.sm__pipe_fma_cycles_active_realtime.avg.pct_of_peak_sustained_elapsed
+FBSP.TriageCompute.dram__throughput.avg.pct_of_peak_sustained_elapsed
+LTS.TriageCompute.lts__throughput.avg.pct_of_peak_sustained_elapsed
+SM_A.TriageCompute.l1tex__throughput.avg.pct_of_peak_sustained_elapsed
+```
+
+The PmSampling_WarpStates section (`--section PmSampling_WarpStates`) gives the stall-reason series:
 ```
 pmsampling:smsp__warps_issue_stalled_long_scoreboard.avg
 pmsampling:smsp__warps_issue_stalled_short_scoreboard.avg
 pmsampling:smsp__warps_issue_stalled_wait.avg
-pmsampling:smsp__warps_issue_stalled_dispatch_stall.avg
-pmsampling:smsp__warps_issue_stalled_branch_resolving.avg
+pmsampling:smsp__warps_issue_stalled_barrier.avg
+pmsampling:smsp__warps_issue_stalled_sleeping.avg
 pmsampling:smsp__warps_issue_stalled_math_pipe_throttle.avg
 pmsampling:smsp__warps_issue_stalled_mio_throttle.avg
 pmsampling:smsp__warps_issue_stalled_lg_throttle.avg
-pmsampling:smsp__warps_issue_stalled_no_instruction.avg
-pmsampling:smsp__warps_issue_stalled_drain.avg
-pmsampling:smsp__warps_issue_stalled_sleeping.avg
-pmsampling:smsp__warps_issue_stalled_misc.avg
-pmsampling:smsp__warps_issue_stalled_barrier.avg
-pmsampling:smsp__warps_issue_stalled_tex_throttle.avg
+...                                                  # one per stall reason
 ```
 
-Note: some `pmsampling:` metrics (notably `pmsampling:sm__throughput.*` and `pmsampling:dram__throughput.*`) may return empty instance arrays depending on ncu version / driver / GPU pair — always check `m.num_instances() > 0` before using. When SM/DRAM timelines are empty, the stall-reason timelines (`pmsampling:smsp__warps_issue_stalled_*`) usually tell the same story and are more reliably populated.
+`plot_timeline.py --list` prints every series a report has. The sample interval was ~1 µs on a B300: a kernel shorter than ~20 µs gives few samples.
 
 ---
 
 ## Discovering metrics for new GPUs
 
-When running on a GPU other than B200:
-
 ```bash
-# All available metrics for a given chip
-ncu --query-metrics --chip gb202        # B200 = GB202 / gb202 in some docs
+# All metrics of the GPU in this machine (needs the GPU)
+ncu --query-metrics
+ncu --query-metrics | grep -i issue_stalled
 
-# Filter by name pattern
-ncu --query-metrics --chip gb202 | grep -i pmsampling
-ncu --query-metrics --chip gb202 | grep -i issue_stalled
-
-# Valid chip names: gb202 (B200), gh200 (H200 / Hopper), ga102 (Ampere), etc.
+# Without the GPU: name the chip; ncu --list-chips lists the names
+ncu --list-chips
+ncu --query-metrics --chip <chip>
 ```
 
 From Python, you can also enumerate per-report:

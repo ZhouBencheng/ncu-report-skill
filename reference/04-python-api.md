@@ -2,29 +2,37 @@
 
 Use the Python module, not CLI output, for anything beyond a quick look. The API lets you extract, aggregate, compare, and archive metric data cleanly.
 
-Module path (adjust for your CUDA version):
+The module ships with Nsight Compute, in `<install>/extras/python`. The helpers' `ncu_utils.py` finds it from the `ncu` on PATH (the same way the CUDA toolkit's `ncu` launcher picks the newest Nsight Compute), so importing `ncu_utils` first is enough:
+
 ```bash
-export PYTHONPATH=$PYTHONPATH:/usr/local/cuda-13.2/nsight-compute-2026.1.0/extras/python
-python3 -c "import ncu_report; print('OK')"
+python3 <skill>/helpers/ncu_utils.py          # prints where ncu_report was found
 ```
+
+```python
+import sys
+sys.path.insert(0, "<skill>/helpers")
+import ncu_utils                               # puts ncu_report on sys.path
+import ncu_report
+```
+
+The API below is ncu 2026.1's; `help(ncu_report.IAction)` documents your version.
 
 ---
 
 ## Basic loading
 
 ```python
-import sys
-sys.path.insert(0, "/usr/local/cuda-13.2/nsight-compute-2026.1.0/extras/python")
-import ncu_report
-
 report = ncu_report.load_report("path/to/full_<tag>.ncu-rep")
 
-# A report can contain multiple "ranges" (each range = one profiled region).
-# In practice, with -c 1 you have exactly one range containing one action (= one kernel launch).
+# A report can contain multiple "ranges" (each range = one profiled region), each
+# with one action per profiled kernel launch. With -k ... -c 1 there is one of each;
+# ncu_utils.actions(report) lists every action.
 rng = report.range_by_idx(0)
 action = rng.action_by_idx(0)
 
-print(f"Kernel demangled name: {action.name()}")       # void my_kernel<8, 256>(...)
+print(action.name())                                   # function name only: my_kernel
+print(action.name(action.NameBase_DEMANGLED))          # void my_kernel<8, 256>(...)
+print(action.name(action.NameBase_MANGLED))            # _Z9my_kernelILi8ELi256EEv...
 print(f"Total metrics collected: {len(action.metric_names())}")
 ```
 
@@ -49,7 +57,7 @@ print(f"DRAM read BW:  {dram_read_bw/1e9:.2f} GB/s")
 print(f"Duration:      {duration_ns/1e3:.2f} µs")
 ```
 
-**Always wrap in a try/except or helper.** Metric names differ between GPU generations — see [`08-b200-metric-names.md`](08-b200-metric-names.md). A metric that exists on A100 may return `KeyError` on B200.
+**Always wrap in a try/except or helper.** Metric names differ between GPU generations and ncu releases — see [`08-metric-names.md`](08-metric-names.md). A metric that exists on A100 may return `KeyError` on B200.
 
 ---
 
@@ -75,7 +83,7 @@ Many metrics have multiple values per collection. `value()` returns the aggregat
 
 ```python
 m = action["pmsampling:smsp__warps_issue_stalled_long_scoreboard.avg"]
-n = m.num_instances()              # e.g., 1660 for a PM-sampled metric
+n = m.num_instances()              # e.g., ~1000 for a PM-sampled metric
 print(f"instances: {n}")
 
 vals = []
@@ -90,13 +98,13 @@ for i in range(n):
     vals.append(v)
 ```
 
-For PM sampling this is the timeline — index `i` is a time-ordered sample. Bucket these for an ASCII plot (see `helpers/plot_timeline.py`).
+For PM sampling this is the timeline — index `i` is a time-ordered sample, and `m.correlation_ids()` holds each sample's GPU timestamp (ns). In ncu 2026.1 the series are named `pmsampling:smsp__warps_issue_stalled_*` (PmSampling_WarpStates) and `<UNIT>.<group>.<metric>` (PmSampling, e.g. `TPC.TriageCompute.sm__inst_executed_realtime.avg.per_cycle_active`); `ncu_utils.pm_series_names(action)` lists them. Bucket these for an ASCII plot (see `helpers/plot_timeline.py`).
 
 ---
 
 ## Per-PC → per-source-line mapping
 
-The source-level report (collected with `--set source --section SourceCounters`) has per-PC samples. Map them to source lines via `action.source_info(pc)`:
+A report with the SourceCounters section (`--set full` has it) has per-PC samples. Map them to source lines via `action.source_info(pc)`:
 
 ```python
 def per_pc_stalls(action, stall_metric):
@@ -121,6 +129,8 @@ stalls = per_pc_stalls(action, "smsp__pcsamp_warps_issue_stalled_long_scoreboard
 ```
 
 Aggregate by `(file, line)` and sort by total to get hottest stall lines. See `helpers/extract_stall_hotspots.py` for a complete implementation.
+
+`source_info(pc)` returns only the innermost inlined frame (`file_name()`, `line()`): for CUTLASS/CuTe code that is a library header, the same for every kernel. The full inline chain is in the binary's line table: `ncu_utils.inline_chains(action, binary)` reads it with `nvdisasm -gi` and maps each PC (offset from `launch__function_pcs`, the kernel's first PC) to its frames, checking the SASS against `action.sass_by_pc(pc)`; `extract_stall_hotspots.py --binary` uses it.
 
 ---
 
@@ -153,13 +163,15 @@ def metric_val(m, i=None):
 
 ```python
 # Action (= one kernel launch's profile data)
-action.name()                   # demangled kernel name
+action.name(base)               # base: NameBase_FUNCTION (default) / _DEMANGLED / _MANGLED
 action.metric_names()           # list of all metrics
 action.metric_by_name(name)     # same as action[name]
-action.source_info(pc)          # IPC → SourceInfo (file, line) — only if -lineinfo was used
-action.sass_by_pc()             # dict {pc → SASS instruction string}
-action.ptx_by_pc()              # dict {pc → PTX} — only if --keep was used
-action.rule_results_as_dicts()  # NCU rule-engine output as list of dicts
+action.source_info(pc)          # PC → ISourceInfo (file_name(), line()) of the innermost frame; None without line info
+action.sass_by_pc(pc)           # SASS text of one instruction ("" if none)
+action.ptx_by_pc(pc)            # PTX of one address, when the report has it
+action.source_files()           # {path: content} — content only if collected with --import-source yes
+action.rule_results()           # NCU rule-engine results (IRuleResult objects, below)
+action.timed_warp_samples()     # [{timestamp, pc, stall_reason, not_issued}] from PM sampling
 
 # Metric
 m.value()                       # aggregate value
@@ -193,7 +205,7 @@ for n in sorted(action.metric_names()):
             print(f"{n} = ERROR {e}")
 ```
 
-This is how I built [`08-b200-metric-names.md`](08-b200-metric-names.md) — by enumerating everything available on sm_100.
+This is how [`08-metric-names.md`](08-metric-names.md) was built — by enumerating everything a `--set full` report holds.
 
 ---
 
@@ -231,16 +243,16 @@ compare("v1.ncu-rep", "v2.ncu-rep", [
 The rule engine results — the "OPT Est. Speedup: X%" bullets — are accessible as structured data:
 
 ```python
-for result in action.rule_results_as_dicts():
-    severity = result.get("type", "?")      # "OPT" / "INF" / "WRN"
-    rule_name = result.get("rule_name", "?")
-    message = result.get("message_for_display", "?")
-    est_speedup = result.get("estimated_speedup_pct", None)
-    print(f"[{severity}] {rule_name}: {est_speedup}%")
-    print(f"    {message[:200]}")
+for rr in action.rule_results():
+    msg = rr.rule_message() if rr.has_rule_message() else {}
+    # {'title': ..., 'message': ..., 'type': ncu_report.MsgType_*}  (OK 1, OPTIMIZATION 2, WARNING 3, ERR 4)
+    est = rr.speedup_estimation() if rr.has_speedup_estimation() else {}
+    # {'type': ncu_report.SpeedupType_LOCAL (1) or _GLOBAL (2), 'speedup': percent}
+    print(f"{rr.section_identifier()} / {rr.rule_identifier()}: {est.get('speedup')}%")
+    print(f"    {msg.get('message', '')[:200]}")
 ```
 
-Sort by `estimated_speedup_pct` descending to get the highest-impact suggestions first.
+The speedup is already a percentage. `rule_results_as_dicts()` returns the same as plain dicts (`rule_identifier`, `name`, `section_identifier`, `rule_message`, `speedup_estimation`, `focus_metrics`), leaving out what a rule does not have. `ncu_utils.rule_speedups(action)` returns them sorted, highest speedup first, with the message's `@section:...@` link markup removed.
 
 ---
 
@@ -275,7 +287,7 @@ This makes future re-analysis cheap: the raw data lives as JSON, you don't need 
 
 ## Gotchas
 
-- **`KeyError` on a metric that "should" exist**: the metric has a different name on this GPU. Check [`08-b200-metric-names.md`](08-b200-metric-names.md) or enumerate with `action.metric_names()`.
+- **`KeyError` on a metric that "should" exist**: the metric has a different name on this GPU. Check [`08-metric-names.md`](08-metric-names.md) or enumerate with `action.metric_names()`.
 - **`num_instances() == 0`** but you expected per-instance data: the metric wasn't collected in instanced mode, or the section that produces it wasn't requested. Re-run ncu with the right `--section`.
 - **`has_correlation_ids() == False`** on a source-level metric: `-lineinfo` wasn't on the compile line. Rebuild.
 - **`source_info(pc)` returns None**: same as above — rebuild with `-lineinfo`.

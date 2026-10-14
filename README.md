@@ -7,7 +7,9 @@
 > For bug reports, feature requests, and discussions, please use the main KDA repository:
 > https://github.com/mit-han-lab/kernel-design-agents
 
-A Claude Code skill for profiling CUDA kernels with Nsight Compute on NVIDIA B200 (sm_100). Covers the full workflow: build a standalone harness, run `ncu`, parse reports with the Python API, walk through six analysis dimensions, match patterns to a diagnosis playbook, and write an evidence-backed optimization report.
+A Claude Code skill for profiling CUDA kernels with Nsight Compute on NVIDIA Blackwell (B200 / B300, sm_100 / sm_103). Covers the full workflow: get a profile target (the real code, or a standalone harness), run `ncu`, parse reports with the Python API, walk through six analysis dimensions, match patterns to a diagnosis playbook, and write an evidence-backed optimization report.
+
+Written against Nsight Compute 2026.1.1 (CUDA 13.2): its sets, rule-result format, PM-sampling series names and default clock control.
 
 The skill is self-contained: reference docs, reusable helper scripts (harness template, safetensors loader, report-analysis Python), and a companion Blackwell programming reference all ship in this repo.
 
@@ -22,21 +24,21 @@ The skill is self-contained: reference docs, reusable helper scripts (harness te
 │   ├── harness_template.cu           ← standalone profiling harness template
 │   ├── safetensors_loader.h          ← header-only safetensors reader (no deps)
 │   ├── list_flashinfer_workloads.py  ← browse flashinfer-trace datasets
-│   ├── analyze_reports.py            ← extract + compare key metrics from .ncu-rep files
-│   ├── extract_stall_hotspots.py     ← per-line stall aggregation (source-level reports)
+│   ├── analyze_reports.py            ← key metrics, NCU rule results, comparisons from .ncu-rep files
+│   ├── extract_stall_hotspots.py     ← per-line stall aggregation (inline-aware with --binary)
 │   ├── plot_timeline.py              ← ASCII PM-sampling timeline plots (reveals tail effects)
-│   ├── ncu_utils.py                  ← shared Python helpers, B200-compatible key metric list
+│   ├── ncu_utils.py                  ← shared Python helpers: finds ncu_report, key metric list, rules, PM series
 │   └── README.md
 ├── reference/                        ← detailed reference docs
-│   ├── 00-directory-layout.md        ← profile/ directory conventions (read first)
+│   ├── 00-directory-layout.md        ← profile directory conventions (read first)
 │   ├── 01-workflow.md                ← end-to-end profiling checklist
-│   ├── 02-harness-guide.md           ← how to build a standalone profiling harness
+│   ├── 02-harness-guide.md           ← profiling the real code or a standalone harness
 │   ├── 03-collection.md              ← ncu command recipes
 │   ├── 04-python-api.md              ← ncu_report Python API patterns
 │   ├── 05-analysis-dimensions.md     ← six analysis dimensions
 │   ├── 06-diagnosis-playbook.md      ← pattern → cause → fix
 │   ├── 07-report-template.md         ← final report structure
-│   ├── 08-b200-metric-names.md       ← sm_100 metric name reference
+│   ├── 08-metric-names.md            ← Blackwell metric names (ncu 2026.1)
 │   └── 09-common-issues.md           ← permissions, PM sampling, JIT toolchains, etc.
 └── blackwell-cuda-programming.md     ← companion reference: Blackwell programming principles
 ```
@@ -108,21 +110,21 @@ When invoked, Claude reads `SKILL.md`, follows its workflow (phases 0 → 6 in `
 The Python helpers work standalone for any `.ncu-rep` you have:
 
 ```bash
-# Make sure ncu_report is importable (the helpers try common paths automatically)
-export PYTHONPATH=$PYTHONPATH:/usr/local/cuda-13.2/nsight-compute-2026.1.0/extras/python
+# The helpers find ncu_report from the ncu on PATH; this prints where
+python3 ~/.claude/skills/ncu-report-skill/helpers/ncu_utils.py
 
-# Create a run directory
-export RUN=/path/to/your/profile/myrun
+# The run directory holding reports/
+export RUN=<your profile root>/myrun
 
 # Extract key metrics from one or more reports
 python3 ~/.claude/skills/ncu-report-skill/helpers/analyze_reports.py \
     --run-dir "$RUN" \
     --report "$RUN/reports/full_<tag>.ncu-rep" --tag <tag>
 
-# Per-line stall hotspots (requires a source-level .ncu-rep)
+# Per-line stall hotspots (--set full has the source counters; --binary for inlined code)
 python3 ~/.claude/skills/ncu-report-skill/helpers/extract_stall_hotspots.py \
     --run-dir "$RUN" \
-    --report "$RUN/reports/source_<tag>.ncu-rep" --tag <tag>
+    --report "$RUN/reports/full_<tag>.ncu-rep" --tag <tag>
 
 # ASCII PM-sampling timelines
 python3 ~/.claude/skills/ncu-report-skill/helpers/plot_timeline.py \
@@ -141,12 +143,12 @@ The C++ harness template + safetensors loader live under `helpers/`; copy them i
 
 ## Requirements
 
-- CUDA Toolkit with `nvcc` (tested with 13.2)
-- Nsight Compute CLI `ncu` (tested with 2026.1)
+- CUDA Toolkit with `nvcc`, `cuobjdump`, `nvdisasm` (tested with 13.2)
+- Nsight Compute CLI `ncu` (tested with 2026.1.1)
 - The `ncu_report` Python module (ships with Nsight Compute under `extras/python/`)
 - An NVIDIA GPU with permission to access performance counters (see `reference/09-common-issues.md` if `ncu` reports `ERR_NVGPUCTRPERM`)
 
-The skill is optimized for B200 / sm_100 metric names, but the workflow and helpers work on any CUDA GPU Nsight Compute supports. Metric names may differ on older GPUs (A100, H100) — see `reference/08-b200-metric-names.md` for guidance.
+The skill is written for Blackwell (B200 / B300) metric names, but the workflow and helpers work on any CUDA GPU Nsight Compute supports. Metric names may differ on older GPUs (A100, H100) and other ncu releases — see `reference/08-metric-names.md` for guidance.
 
 ---
 
