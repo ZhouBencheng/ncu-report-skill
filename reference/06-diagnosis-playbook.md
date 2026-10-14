@@ -16,7 +16,7 @@ For each *observation* below, read:
 - **Deeper fixes** — when first-line isn't enough.
 - **Exceptions** — kernel types where this pattern is actually *expected* and should be left alone.
 
-Most kernels will match 2-4 patterns simultaneously. **Rank them by magnitude** using NCU's `Est. Speedup: X%` fields (from `--page details`) and the stall-percentage breakdown. Fix the biggest one first.
+Most kernels will match 2-4 patterns simultaneously. **Rank them by magnitude** using NCU's `Est. Speedup: X%` fields (from `--page details` or `rules_<tag>.txt`) and the stall-percentage breakdown, after checking each estimate against the counters it rests on. Fix the biggest one first.
 
 ---
 
@@ -24,7 +24,7 @@ Most kernels will match 2-4 patterns simultaneously. **Rank them by magnitude** 
 
 **Signals:**
 - `launch__waves_per_multiprocessor < 0.5`
-- `launch__grid_size < device__attribute_multiprocessor_count` (e.g., 64 blocks on a 148-SM B200)
+- `launch__grid_size < device__attribute_multiprocessor_count` (e.g., 64 blocks on a 148-SM B200 / B300)
 - NCU rule: *"The grid for this launch is configured to execute only N blocks, which is less than the M multiprocessors used."* with `Est. Speedup: 50-90%`
 
 **Why:** each CTA occupies at most one SM; with fewer CTAs than SMs, some SMs are completely idle throughout the kernel.
@@ -50,7 +50,7 @@ Most kernels will match 2-4 patterns simultaneously. **Rank them by magnitude** 
 
 **Signals:**
 - Multi-workload: `max_seq_len / avg_seq_len > 3` in input distribution.
-- Per-SM active cycles span 5-100× between slowest and fastest SM (from `--page details` distribution).
+- Per-SM active cycles span 5-100× between slowest and fastest SM (from `--page details` distribution) — or much less when the longest CTAs start late: then the SM-activity timeline's falling edge is the signal.
 - PM timeline shape: long gradual tail at the end (visible via `plot_timeline.py`).
 - `launch__waves_per_multiprocessor > 1.05` with partial last wave.
 - NCU rule: `"partial wave may account for up to X% of the total runtime"`.
@@ -76,7 +76,7 @@ Most kernels will match 2-4 patterns simultaneously. **Rank them by magnitude** 
 ## Pattern C — Uncoalesced global loads
 
 **Signals:**
-- `l1tex__t_sectors_pipe_lsu_mem_global_op_ld.sum / l1tex__t_requests_pipe_lsu_mem_global_op_ld.sum > 5` (ideal is 4).
+- `l1tex__t_sectors_pipe_lsu_mem_global_op_ld.sum / l1tex__t_requests_pipe_lsu_mem_global_op_ld.sum` well above the ideal for the load width (4 for 4-byte loads, 8 for 8-byte `LDG.E.64`, 16 for 16-byte `LDG.E.128`).
 - NCU rule: *"uncoalesced global accesses resulting in N excessive sectors (X% of the total)"*.
 - NCU rule: *"On average, only Y of the 32 bytes transmitted per sector are utilized"*.
 - Primary stall reason on the offending load line is `long_scoreboard`.
@@ -127,7 +127,7 @@ If `K < 8`: consider batching multiple iterations' results into a vectorized wri
 **Signals:**
 - `smsp__pcsamp_warps_issue_stalled_long_scoreboard / smsp__pcsamp_sample_count > 0.40`.
 - `smsp__average_warps_issue_stalled_long_scoreboard_per_issue_active.ratio > 3`.
-- `dram__bytes_read.sum.pct_of_peak_sustained_elapsed < 10%` (→ not DRAM-bandwidth-bound).
+- `gpu__dram_throughput.avg.pct_of_peak_sustained_elapsed < 10%` (→ not DRAM-bandwidth-bound).
 - Hotspot lines are global loads (check `stall_hotspots_<tag>.txt`).
 
 **Why:** warps issue a load, then stall waiting for it to return before the next dependent op. Usually combined with low occupancy or insufficient ILP.
@@ -202,6 +202,7 @@ If `K < 8`: consider batching multiple iterations' results into a vectorized wri
 - `l1tex__data_pipe_lsu_wavefronts.avg.pct_of_peak_sustained_elapsed` high for shared-mem ops.
 - `short_scoreboard` stalls concentrated on shared-memory load lines.
 - Access pattern has regular strides that align to bank boundaries.
+- Confirm per instruction before trusting NCU's bank-conflict rule: the per-PC metrics `memory_l1_wavefronts_shared` and `memory_l1_wavefronts_shared_ideal` (and `derived__memory_l1_wavefronts_shared_excessive`) of a `--set full` report give each shared-memory instruction's actual and conflict-free wavefronts. Summed excess well below the rule's estimate means the estimate is off.
 
 **Why:** shared memory has 32 banks; same-bank accesses serialize.
 
@@ -325,9 +326,34 @@ If `K < 8`: consider batching multiple iterations' results into a vectorized wri
 
 ---
 
+## Pattern O — Serial dependency chain (few warps, fixed-latency stalls)
+
+**Signals:**
+- `wait` and `short_scoreboard` lead the per-PC samples, while `long_scoreboard` is small: warps wait on their own fixed-latency and shared-memory / MUFU results, not on global memory.
+- `smsp__issue_active.avg.pct_of_peak_sustained_active` low (e.g. < 40%) with only 1-2 warps per scheduler doing the math (`smsp__warps_active.avg.per_cycle_active`; roles of warp-specialized kernels count separately).
+- The hot lines are in a loop whose iterations depend on each other (a recurrence, a scan, a state update), and DRAM throughput is low.
+- Runtime scales with the length of the chain (sequence length, number of steps), not with the amount of parallel work: halving the heads or batch barely changes it.
+
+**Why:** each step needs the previous step's result, and with one math warp per scheduler there is nothing to issue while it waits, so latency, not throughput, sets the time. Often combined with Pattern A (one CTA per independent chain, fewer chains than SMs).
+
+**First-line fix:** give each scheduler independent work:
+- **Split the chain's state across more warps or CTAs** (e.g. along a dimension each step updates independently) so several chains interleave.
+- **Keep the state in registers (or TMEM)** rather than reloading it from shared memory every step: a shared-memory round trip per step is on the critical path.
+
+**Deeper fixes:**
+- Fewer, larger steps (a bigger chunk per iteration), trading parallel work inside a step for fewer serial steps.
+- Move work that does not depend on the chain (precomputation, the inputs of the next step) off the critical path into other warps.
+
+**Exceptions:**
+- Chains that are short or already overlapped by many independent CTAs: then other patterns dominate.
+
+**Cross-ref:** Pattern E (the global-memory variant), Pattern A, Pattern J.
+
+---
+
 ## Ranking template for the final report
 
-When you hand back an optimization plan, rank by `(expected speedup) × (effort ratio)`. NCU's `Est. Speedup` is your best estimator.
+When you hand back an optimization plan, rank by `(expected speedup) × (effort ratio)`. NCU's `Est. Speedup` is a starting estimate: check it against the counters it rests on (it can be far off for small grids, bank conflicts or L2 compression) before you rank by it.
 
 ```
 Priority 1: <pattern> — <concrete fix>

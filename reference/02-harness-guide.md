@@ -2,15 +2,54 @@
 
 A **profiling harness** is a small standalone CUDA executable whose sole purpose is to launch the kernel you want to profile, with realistic inputs, using compile flags that ncu can consume (specifically `-lineinfo`).
 
-You should almost always build a harness when profiling a kernel that lives inside:
+First check whether you need one: if the code you would profile already carries line info, profile it as it is ([Profiling the real code](#profiling-the-real-code)). Build a harness when profiling a kernel that lives inside:
 
 - **TVM-FFI / FlashInfer solutions** — compiled via `tvm_ffi.cpp.build`, hard to add `-lineinfo`.
 - **PyTorch inline-compiled CUDA** — compiled via `torch.utils.cpp_extension.load`, same problem.
-- **Triton kernels** — Triton's JIT makes it hard to pin a specific compiled artifact.
 - **CUTLASS JIT** — layered build system.
 - **A larger binary** where the kernel of interest is buried under initialization, data loading, or networking code that makes each profile run take minutes.
 
-You can skip the harness if the kernel already builds with `-lineinfo` *and* iterating on the full binary is fast enough.
+You can skip the harness if the kernel already has line info *and* running it in place is fast enough.
+
+---
+
+## Does the code have line info?
+
+Extract the cubins of the binary (executable, `.so`, fatbin) and look for line records:
+
+```bash
+d=$(mktemp -d) && (cd "$d" && cuobjdump -xelf all "$(realpath path/to/binary_or_lib.so)")
+for c in "$d"/*.cubin; do echo "$c: $(nvdisasm -g "$c" | grep -c '//## File') line records"; done
+```
+
+Zero line records: no line info, so build a harness. Also note which architectures the cubins are for (`<name>.sm_100a.cubin`, `.sm_103a.cubin`, ...): a cubin built for one architecture (`sm_100a`) does not run on another (`sm_103a`) unless the library also ships family-wide cubins (`sm_100f`) or PTX that the driver can compile.
+
+To list the kernels a binary holds: `cuobjdump -res-usage <binary> | grep Function` (mangled names; pipe through `cu++filt` to demangle).
+
+---
+
+## Profiling the real code
+
+When the kernel already has line info — a prebuilt CUDA extension often does — profile it where it runs. For a library called from Python, a driver script of a few lines is enough: build the inputs, call the entry point once to warm up (JIT, autotuning, caches), then once inside a profiler range, and pass `--profile-from-start off` to ncu so only that call is profiled:
+
+```python
+# $PROFILE_RUN_DIR/harness/driver.py
+import torch
+from the_library import entry_point          # the code under test, unchanged
+
+inputs = make_inputs(...)                    # a representative workload
+entry_point(*inputs); torch.cuda.synchronize()        # warm-up
+torch.cuda.profiler.start()
+entry_point(*inputs); torch.cuda.synchronize()
+torch.cuda.profiler.stop()
+```
+
+```bash
+ncu --profile-from-start off --set full --import-source yes \
+    -k "regex:KERNEL" -c 1 -o "$PROFILE_RUN_DIR/reports/full_<tag>.ncu-rep" python3 "$PROFILE_RUN_DIR/harness/driver.py"
+```
+
+In a project that runs Python through a launcher (`uv run`, ...), put ncu inside it: `uv run ncu ... python driver.py` (`ncu ... uv run python driver.py` hangs; `03-collection.md`). Keep the driver in the run's `harness/`. Without the profiler range, `-k "regex:KERNEL" -s <warm-up launches> -c 1` skips the warm-up launches instead.
 
 ---
 
@@ -42,12 +81,10 @@ A complete reusable template lives at [`../helpers/harness_template.cu`](../help
 
 Compile with:
 ```bash
-nvcc -O2 -std=c++17 -lineinfo \
-     -gencode=arch=compute_100,code=sm_100 \
-     harness.cu -o harness
+nvcc -O2 -std=c++17 -lineinfo -arch=sm_100a harness.cu -o harness
 ```
 
-Replace `compute_100,code=sm_100` with your target SM version (check `nvidia-smi --query-gpu=compute_cap --format=csv`).
+`-arch` is the target GPU's compute capability: `nvidia-smi --query-gpu=compute_cap --format=csv` where the GPU is — 10.0 (B200) is `sm_100a`, 10.3 (B300) is `sm_103a`. The `a` suffix enables the architecture-specific instructions (tcgen05, TMEM) Blackwell kernels use; plain `sm_100` / `sm_103` builds code without them. Name the architecture explicitly rather than `-arch=native`, so the build works on a machine without the GPU.
 
 ---
 
@@ -107,7 +144,7 @@ This is free relative to compilation time and removes all doubt about data-depen
 
 ## Choosing representative workloads
 
-If the user's dataset has many workloads, you cannot profile them all. Pick 2-3 workloads that together cover:
+Take the workloads from what the project actually measures: if it has a benchmark, use the inputs that benchmark times (its workload list, config or input generator) — a dataset in the repo may hold different shapes. If the user's dataset has many workloads, you cannot profile them all. Pick 2-3 workloads that together cover:
 
 1. **Each active dispatch path.** If the kernel's host-side dispatcher picks different template instantiations / grid configs based on input shape, profile one workload per path. Identify the dispatch rules by reading the launcher code, not by guessing.
 2. **The largest realistic workload** in the hot-path dispatch — usually the most performance-sensitive.
@@ -185,7 +222,7 @@ The principles still apply — you need to learn the dataset's layout and locate
 2. A list of concrete workload instances (what values the var axes take).
 3. The raw tensor bytes for each instance.
 
-Write a short inspector script equivalent to `list_flashinfer_workloads.py` for that format, drop it under `$PROFILE_RUN_DIR/harness/` if it's one-shot, or generalize it under `helpers/` if you'll reuse it.
+Write a short inspector script equivalent to `list_flashinfer_workloads.py` for that format and keep it under `$PROFILE_RUN_DIR/harness/`.
 
 ---
 
@@ -221,12 +258,12 @@ Always run the harness once without ncu to confirm it launches correctly:
 
 If it crashes or hangs, fix that *before* adding ncu to the mix — ncu errors are far less descriptive than plain CUDA runtime errors.
 
-If feasible, also spot-check correctness with `cuda-memcheck` or a golden-output test — but not inside the profiling harness itself.
+If feasible, also spot-check correctness with `compute-sanitizer` or a golden-output test — but not inside the profiling harness itself.
 
 ---
 
 ## When NOT to harness
 
-Sometimes the kernel's perf genuinely depends on surrounding code — e.g., the kernel reuses a specific L2 state set up by a prior kernel, or the kernel's launch configuration depends on a runtime dispatch step. In that case profile through the original binary (even if it's slower to iterate) and make sure the build system has `-lineinfo`. Check the nvcc invocation with `ninja -v` or `make V=1`.
+Sometimes the kernel's perf genuinely depends on surrounding code — e.g., the kernel reuses a specific L2 state set up by a prior kernel, or the kernel's launch configuration depends on a runtime dispatch step. In that case profile through the original program (even if it's slower to iterate) and make sure the build has line info ([check](#does-the-code-have-line-info); the nvcc invocation shows in `ninja -v` or `make V=1`).
 
 Alternatively, you can build a harness that runs the *prior* kernel too, to reproduce the right L2 state. But this is rare — most kernels are essentially independent of prior state once a warmup pass has happened.

@@ -5,7 +5,7 @@ Every kernel profile report is ambiguous until you look at it through specific l
 For each dimension this doc describes:
 
 - **What you're answering**
-- **Which metrics to read** (B200 / sm_100 names)
+- **Which metrics to read** (Blackwell names, ncu 2026.3)
 - **How to read them** (what's "normal", what's "bad")
 - **Which `helpers/` to run**
 
@@ -69,9 +69,9 @@ There is no single "imbalance" metric — use these signals together:
 sm__cycles_active.{avg,max,min,sum}       # via action.source_info or the details page
 
 # PM sampling (time series) — the shape matters, not just the mean
-pmsampling:smsp__warps_issue_stalled_long_scoreboard.avg
-pmsampling:smsp__warps_issue_stalled_short_scoreboard.avg
-pmsampling:smsp__warps_issue_stalled_wait.avg
+TPC.TriageCompute.sm__cycles_active.avg.per_cycle_elapsed
+TPC.TriageCompute.sm__inst_executed_realtime.avg.per_cycle_active
+# and the stall reasons over time: the timed warp samples (plot_timeline.py)
 ```
 
 **Reading:**
@@ -101,7 +101,7 @@ avg = sum(work_per_cta) / len(work_per_cta)
 print(f"max/avg = {max(work_per_cta)/avg:.2f}x, max/min = {max(work_per_cta)/min(work_per_cta):.2f}x")
 ```
 
-Ratios > 5x indicate significant potential for tail effect.
+Ratios > 5x indicate significant potential for tail effect. A lower ratio does not rule one out: when the longest CTAs start late (in a later wave, or behind short ones), even max/avg ~2x can leave a third of the SMs idle at the end. Judge it from the per-SM active cycles, the SM-activity timeline and the launch order, not from the ratio alone.
 
 ---
 
@@ -124,7 +124,7 @@ smsp__average_warps_issue_stalled_dispatch_stall_per_issue_active.ratio
 smsp__average_warps_issue_stalled_no_instruction_per_issue_active.ratio
 ```
 
-**Per-line stall metrics (from `--set source`):**
+**Per-line stall metrics (SourceCounters section, in `--set full`):**
 ```
 smsp__pcsamp_sample_count                                  # total samples
 smsp__pcsamp_warps_issue_stalled_long_scoreboard           # per-PC counts
@@ -163,6 +163,12 @@ smsp__pcsamp_warps_issue_stalled_selected                  # productive cycles
 
 **Helper:** `extract_stall_hotspots.py` produces `stall_hotspots_<tag>.txt` which ranks source lines by total stall samples. This directly points at the offending `LDG`, `BAR.SYNC`, or compute op in source.
 
+**Reading per-line samples:**
+
+- A sample records the PC of the instruction the warp is waiting to issue. A wait *at* a barrier (`BAR.SYNC`, an mbarrier try-wait loop) is therefore charged to the instruction after it, often on the next source line; look one instruction back (`ncu --import ... --page source --print-source sass`) before blaming a line.
+- In warp-specialized kernels (producer/consumer roles), warps that idle by design — a load or store warp sleeping or waiting at a barrier until its next tile — collect many `sleeping` / `barrier` samples without being on the critical path. Rank the lines of the warps that do the work (the compute loop) separately.
+- For inlined CUTLASS/CuTe code, rank by the kernel's own lines (`--binary`, see `09-common-issues.md`).
+
 ---
 
 ## Dimension 4 — Tensor Core utilization
@@ -175,8 +181,11 @@ sm__pipe_tensor_cycles_active.avg.pct_of_peak_sustained_elapsed      # overall T
 sm__pipe_tensor_cycles_active.avg.pct_of_peak_sustained_active       # per active SM cycle
 sm__pipe_tensor_subpipe_hmma_cycles_active.avg.pct_of_peak_sustained_elapsed  # BF16/FP16 MMA
 sm__pipe_tensor_subpipe_imma_cycles_active.avg.pct_of_peak_sustained_elapsed  # INT MMA
-sm__pipe_tensor_subpipe_dmma_cycles_active.avg.pct_of_peak_sustained_elapsed  # FP64 MMA
-sm__ops_path_tensor_op_hmma_src_bf16_dst_fp32_sparsity_off.avg       # BF16×BF16→FP32 ops
+sm__pipe_tensor_subpipe_dmma_cycles_active.avg.pct_of_peak_sustained_elapsed  # FP64 MMA (absent on B300)
+sm__ops_path_tensor_op_hmma_src_bf16_dst_fp32_sparsity_off.avg       # BF16×BF16→FP32 ops, warp-level mma (HMMA)
+sm__ops_path_tensor_op_utchmma_src_bf16_dst_fp32_sparsity_off.avg.pct_of_peak_sustained_elapsed  # the same for tcgen05 (UTC) MMA
+sm__mem_tensor_cycles_active.avg.pct_of_peak_sustained_elapsed        # TMEM busy (tcgen05 kernels)
+smsp__sass_inst_executed_op_utcmma.sum                                # tcgen05.mma instructions issued
 ```
 
 **Reading:**
@@ -197,11 +206,10 @@ sm__ops_path_tensor_op_hmma_src_bf16_dst_fp32_sparsity_off.avg       # BF16×BF1
 
 **Metrics (PM sampling, time-series):**
 ```
-pmsampling:sm__throughput.avg.pct_of_peak_sustained_elapsed
-pmsampling:sm__warps_active.avg.pct_of_peak_sustained_active
-pmsampling:dram__throughput.avg.pct_of_peak_sustained_elapsed
-pmsampling:smsp__warps_issue_stalled_long_scoreboard.avg
-pmsampling:smsp__warps_issue_stalled_short_scoreboard.avg
+TPC.TriageCompute.sm__cycles_active.avg.per_cycle_elapsed
+TPC.TriageCompute.sm__inst_executed_realtime.avg.per_cycle_active
+FBSP.TriageCompute.dram__throughput.avg.pct_of_peak_sustained_elapsed
+# stall reasons over time: the timed warp samples (PmSampling), plotted by plot_timeline.py
 ```
 
 **Reading (timeline shapes):**
@@ -214,7 +222,7 @@ pmsampling:smsp__warps_issue_stalled_short_scoreboard.avg
 
 **Helper:** `plot_timeline.py` — renders ASCII plots. Look at multiple series side-by-side (SM throughput + DRAM throughput + long_scoreboard stalls) to distinguish the shapes.
 
-**Note:** PM sampling has ~2µs interval on B200. Very short kernels (< 20 µs) produce few samples — interpret with care.
+**Note:** the PM sampling interval was ~1 µs on a B300 (`plot_timeline.py` prints it per replay group). Very short kernels (< 20 µs) produce few samples — interpret with care. Series names: `08-metric-names.md`; `plot_timeline.py --list` shows a report's.
 
 ---
 
@@ -225,6 +233,7 @@ pmsampling:smsp__warps_issue_stalled_short_scoreboard.avg
 **Metrics:**
 ```
 # DRAM
+gpu__dram_throughput.avg.pct_of_peak_sustained_elapsed  # reads + writes: the bandwidth headline
 dram__bytes_read.sum
 dram__bytes_read.sum.pct_of_peak_sustained_elapsed
 dram__bytes_write.sum.pct_of_peak_sustained_elapsed
@@ -239,7 +248,7 @@ l1tex__t_sector_pipe_lsu_mem_global_op_st_hit_rate.pct
 # Sectors per request (coalescing quality)
 l1tex__t_sectors_pipe_lsu_mem_global_op_ld.sum              # total sectors
 l1tex__t_requests_pipe_lsu_mem_global_op_ld.sum             # total requests
-# Compute sectors/request yourself — ideal is 4 (128B aligned load)
+# Compute sectors/request yourself — the ideal is (bytes per thread × 32) / 32-byte sectors per warp request: 4 for 4-byte loads, 8 for 8-byte, 16 for 16-byte
 
 # Store efficiency
 smsp__sass_average_data_bytes_per_sector_mem_global_op_st.ratio  # useful bytes/sector, max 32
@@ -256,12 +265,12 @@ smsp__sass_inst_executed_op_shared.sum                     # 0 if no shared memo
 
 **Reading:**
 
-- **`dram__bytes_read.sum.pct_of_peak_sustained_elapsed` ≈ 80-100%**: genuinely DRAM-bandwidth-bound. Reduce bytes / amortize reads with shared memory.
+- **`gpu__dram_throughput.avg.pct_of_peak_sustained_elapsed` ≈ 80-100%** (reads + writes; the read-only metric undercounts a write-heavy kernel): genuinely DRAM-bandwidth-bound. Reduce bytes / amortize reads with shared memory.
 - **`... << 10%` but kernel is slow**: *not* bandwidth-bound. It's latency-bound (Dimension 3) or compute-bound (check `sm__throughput`).
 - **`l1tex__t_sector_hit_rate.pct > 90%`**: good data locality, L1 is absorbing the reuse.
 - **`lts__t_sector_hit_rate.pct < 50%`**: L2 is being blown through, reads fall to DRAM.
-- **Sectors/request = 4.0 (ideal 128B fully-coalesced) to 5.0**: small coalescing issue but acceptable.
-- **Sectors/request > 8.0**: serious non-coalesced access — big optimization opportunity.
+- **Sectors/request at the ideal for the load width** (4 for 4-byte loads, 8 for 8-byte, 16 for 16-byte; the SASS says which: `LDG.E`, `LDG.E.64`, `LDG.E.128`) to ~1.25× it: coalesced, or a small issue.
+- **Sectors/request at 2× the ideal or more**: serious non-coalesced access — big optimization opportunity.
 - **`smsp__sass_average_data_bytes_per_sector_mem_global_op_st.ratio < 16`**: stores are using less than half of each 32B sector. Usually means only a subset of warp lanes write (e.g. `if (lane_id < 4)` patterns).
 - **`smsp__sass_inst_executed_op_local_ld.sum > 0`**: **register spill** — very bad, local memory is DRAM-backed. Reduce register pressure with `__launch_bounds__` or kernel splitting.
 - **`smsp__sass_inst_executed_op_shared.sum == 0`**: kernel uses no shared memory. Fine for element-wise kernels; often a missed optimization for data-reuse-heavy kernels.
