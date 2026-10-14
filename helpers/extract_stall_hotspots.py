@@ -217,6 +217,8 @@ def main():
 
     if len(args.report) != len(args.tag):
         ap.error("--report and --tag counts must match")
+    if len(set(args.tag)) != len(args.tag):
+        ap.error("each --tag must be different: outputs are named after it")
 
     analysis_dir = args.run_dir / "analysis"
     analysis_dir.mkdir(parents=True, exist_ok=True)
@@ -261,7 +263,7 @@ def main():
             kernel_executed = (executed_by_line(action, lambda pc: (chains.get(pc) or [("?", 0)])[-1])
                                if kernel_lines is not None else None)
             out = analysis_dir / f"stall_hotspots_{t}.txt"
-            write_report(per_line, out, t, kernel_name(action), args.top, kernel_lines, alignment,
+            write_report(per_line, out, t, kernel_name(action, 'function'), args.top, kernel_lines, alignment,
                          executed, kernel_executed)
             print(f"[{t}] -> {out} ({len(per_line)} distinct lines)")
 

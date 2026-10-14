@@ -118,6 +118,8 @@ def main():
 
     if len(args.report) != len(args.tag):
         ap.error("--report and --tag counts must match")
+    if len(set(args.tag)) != len(args.tag):
+        ap.error("each --tag must be different: outputs are named after it")
 
     analysis_dir = args.run_dir / "analysis"
     analysis_dir.mkdir(parents=True, exist_ok=True)

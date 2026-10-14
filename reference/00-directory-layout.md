@@ -136,7 +136,8 @@ Or, to track a few canonical runs, ignore only the data-heavy parts:
 */reports/
 */analysis/metrics_all_*.json
 */analysis/raw_*.csv
-*/harness/*_harness          # binary only, keep the .cu
+# the harness binary only, keep the .cu
+*/harness/*_harness
 ```
 
 ---

@@ -24,7 +24,7 @@ Every artifact produced in subsequent phases is written **only** under `$PROFILE
 
 ## Phase 0.5 — Frame the problem (before any tools)
 
-Before typing any commands, answer these in your head (or in a short note to the user):
+Before typing any commands, answer these in your head (or in a few lines of `REPORT.md`):
 
 1. **What kernel(s) am I profiling?** Get the exact kernel name or regex. Kernels are often templated (`foo_kernel<8, 256>`); ncu's `-k "regex:..."` matches the function name (`foo_kernel`) by default, and the full demangled name with `--kernel-name-base demangled`.
 2. **Which workload / input shape?** If the kernel takes variable-sized inputs, pick a **specific** real workload — don't invent shapes. If the user has multiple representative shapes, profile the hottest one first; profile others only if the first reveals nothing.
@@ -32,7 +32,7 @@ Before typing any commands, answer these in your head (or in a short note to the
 4. **What question am I answering?** "Why is this slow?" is too vague. Better: "At shape X, is the kernel latency-bound or bandwidth-bound?" or "We spent 2 weeks on optimization Y — did it actually help?"
 5. **What is the baseline?** If there's a reference implementation (torch, cuBLAS, a previous version), profile it too for comparison.
 
-If any of 1-4 are unclear, **ask the user** before profiling. Profiling the wrong thing wastes an hour.
+If any of 1-4 are unclear, settle them before profiling: ask whoever set the task if you can, otherwise choose and record the choice and the reason in `REPORT.md`. Profiling the wrong thing wastes an hour.
 
 ---
 
@@ -90,7 +90,7 @@ ncu --set full --import-source yes \
     "$PROFILE_RUN_DIR/harness/your_harness" [args]
 ```
 
-`--set full` holds every section the helpers read, including the per-PC stall samples and timed warp samples (SourceCounters) and the PM-sampling timelines. Name the output with its `.ncu-rep` extension: without one, ncu 2026.3 writes `.ncu-repz`. A `--set full` run replays the kernel about 50 times: seconds for a short kernel, minutes for a long one. Plan your time budget.
+`--set full` holds every section the helpers read, including the per-PC stall samples (SourceCounters) and the PM-sampling timelines and timed warp samples (PmSampling). Name the output with its `.ncu-rep` extension: without one, ncu 2026.3 writes `.ncu-repz`. A `--set full` run replays the kernel about 50 times: seconds for a short kernel, minutes for a long one. Plan your time budget.
 
 ---
 

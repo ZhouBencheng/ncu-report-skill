@@ -1,11 +1,11 @@
 ---
 name: ncu-report-skill
-description: Use before deciding how to optimize a CUDA kernel, when a kernel is slower than expected, and whenever you are about to run Nsight Compute (ncu) or read its output — instead of guessing at the bottleneck, writing your own profiling script, or reading ncu's console tables by eye. One ncu collection, then helpers that extract key metrics, NCU's rule results, per-line stalls (inlined CUTLASS/CuTe/Triton code included) and PM timelines, and a playbook from signals to fixes. Also when a user asks to profile a kernel, read an ncu report or write an optimization plan ("profile 一下", "为什么慢", "ncu 报告"). Written for ncu 2026.3 on Blackwell (B200 / B300) and other NVIDIA GPUs.
+description: Use before deciding how to optimize a CUDA kernel (hand-written CUDA, Triton, CUTLASS/CuTe), when a kernel is slower than expected, and whenever you are about to run Nsight Compute (ncu) or read its output — instead of guessing at the bottleneck, writing your own profiling script, or reading ncu's console tables by eye. One ncu collection, then helpers that extract key metrics, NCU's rule results, per-line stalls (inlined CUTLASS/CuTe/Triton code included) and PM timelines, and a playbook from signals to fixes. Also when a user asks to profile a kernel, read an ncu report or write an optimization plan ("profile 一下", "为什么慢", "ncu 报告"). Written for ncu 2026.3 on Blackwell (B200 / B300) and other NVIDIA GPUs.
 ---
 
 # Skill: CUDA Kernel Profiling (Nsight Compute)
 
-**When to use:** before choosing what to optimize in a CUDA kernel, when a kernel is slower than its budget or baseline, after a change whose effect you do not understand, and every time you are about to run `ncu` or read a report — so the bottleneck comes from measurements, not guesses. Also when someone asks to profile a kernel, find its bottlenecks, read an ncu report or write an optimization plan ("profile X", "为什么这个 kernel 慢", "ncu report 说...", "下一步怎么优化", "帮我看一下这份 ncu 报告").
+**When to use:** before choosing what to optimize in a GPU kernel (CUDA C++, Triton, CUTLASS/CuTe), when a kernel is slower than its budget or baseline, after a change whose effect you do not understand, and every time you are about to run `ncu` or read a report — so the bottleneck comes from measurements, not guesses. Also when someone asks to profile a kernel, find its bottlenecks, read an ncu report or write an optimization plan ("profile X", "为什么这个 kernel 慢", "ncu report 说...", "下一步怎么优化", "帮我看一下这份 ncu 报告").
 
 **Written for:** Nsight Compute 2026.3.1, the newest release (it also reads reports of older versions), on Blackwell — B200 (sm_100) and B300 (sm_103), 148 SMs each. A CUDA toolkit bundles the ncu of its release (CUDA 13.2: 2026.1.1); newer ones are separate installs (NVIDIA's CUDA package repositories carry `nsight-compute-<version>`, and the toolkit's `ncu` launcher runs the newest installed). Most advice is generic; GPU- or version-specific notes say so. ncu's flags, sets and metric names change between releases: `ncu --version`, `ncu --help`, `ncu --list-sets` and `ncu --list-sections` are the authority when something here does not match what you have.
 
@@ -27,9 +27,9 @@ Most under-performing CUDA kernels are under-performing for exactly one reason t
 
 2. **Get a profile target.** If the kernel already carries line info (many prebuilt libraries do; [`reference/02-harness-guide.md`](reference/02-harness-guide.md) shows how to check), profile the real code: a few-line driver (Python or C++) that calls it once on a representative input is enough. Build a standalone harness with `-lineinfo` when the build has no line info or the kernel is buried in a slow program; the template is [`helpers/harness_template.cu`](helpers/harness_template.cu). Keep it in `$PROFILE_RUN_DIR/harness/`.
 
-3. **Collect one report** with `--set full`: it holds the per-PC stall samples and timed warp samples (SourceCounters) and the PM-sampling timelines; `--import-source yes` embeds the source so the report reads anywhere. Give `-o` the `.ncu-rep` extension (without one, ncu 2026.3 writes `.ncu-repz`; the helpers read both):
+3. **Collect one report** with `--set full`: it holds the per-PC stall samples (SourceCounters) and the PM-sampling timelines and timed warp samples (PmSampling); `--import-source yes` embeds the source so the report reads anywhere. Give `-o` the `.ncu-rep` extension (without one, ncu 2026.3 writes `.ncu-repz`; the helpers read both):
    ```bash
-   ncu --set full --import-source yes \
+   ncu --set full --import-source yes --clock-control boost \
        -k "regex:KERNEL" -c 1 -o "$PROFILE_RUN_DIR/reports/full_<tag>.ncu-rep" <command> [args]
    ```
    See [`reference/03-collection.md`](reference/03-collection.md) for picking the launch, skipping warm-up and faster targeted runs.

@@ -209,7 +209,7 @@ smsp__sass_inst_executed_op_utcmma.sum                                # tcgen05.
 TPC.TriageCompute.sm__cycles_active.avg.per_cycle_elapsed
 TPC.TriageCompute.sm__inst_executed_realtime.avg.per_cycle_active
 FBSP.TriageCompute.dram__throughput.avg.pct_of_peak_sustained_elapsed
-# stall reasons over time: the timed warp samples (SourceCounters), plotted by plot_timeline.py
+# stall reasons over time: the timed warp samples (PmSampling), plotted by plot_timeline.py
 ```
 
 **Reading (timeline shapes):**
@@ -222,7 +222,7 @@ FBSP.TriageCompute.dram__throughput.avg.pct_of_peak_sustained_elapsed
 
 **Helper:** `plot_timeline.py` — renders ASCII plots. Look at multiple series side-by-side (SM throughput + DRAM throughput + long_scoreboard stalls) to distinguish the shapes.
 
-**Note:** the PM sampling interval was ~1 µs on a B300 (`plot_timeline.py` prints it per series). Very short kernels (< 20 µs) produce few samples — interpret with care. Series names: `08-metric-names.md`; `plot_timeline.py --list` shows a report's.
+**Note:** the PM sampling interval was ~1 µs on a B300 (`plot_timeline.py` prints it per replay group). Very short kernels (< 20 µs) produce few samples — interpret with care. Series names: `08-metric-names.md`; `plot_timeline.py --list` shows a report's.
 
 ---
 

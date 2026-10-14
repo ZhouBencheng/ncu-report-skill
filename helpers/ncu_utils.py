@@ -100,10 +100,14 @@ def kernel_name(action, form="demangled"):
 
 
 def action_tags(tag, acts):
-    """One output tag per action: `tag` alone for one action, else `tag.<i>_<function>`."""
+    """One output tag per action: `tag` alone for one action, else `tag.<i>_<function>`.
+
+    The function name is cut to 60 characters of [A-Za-z0-9_.-], so file names stay short.
+    """
     if len(acts) == 1:
         return [tag]
-    return [f"{tag}.{i}_{kernel_name(a, 'function')}" for i, a in enumerate(acts)]
+    return [f"{tag}.{i}_{re.sub(r'[^A-Za-z0-9_.-]', '_', kernel_name(a, 'function'))[:60]}"
+            for i, a in enumerate(acts)]
 
 
 # --- Safe metric access ------------------------------------------------------
@@ -379,9 +383,17 @@ _SEVERITY = {0: "INF", 1: "OK", 2: "OPT", 3: "WRN", 4: "ERR"}  # ncu_report.MsgT
 _SPEEDUP_TYPE = {1: "local", 2: "global"}                      # ncu_report.SpeedupType_*
 
 
+def _link(m):
+    kind, _, rest = m.group(1, 2, 3)
+    if kind == "url":  # @url:<text>:<address>@
+        text, _, address = rest.partition(":")
+        return f"{text} ({address})" if address else text
+    return rest.rsplit(":", 1)[-1]  # @section:<id>:<title>@ and the like: the title
+
+
 def _plain(message):
-    """Rule text without ncu's "@section:<id>:<title>@" link markup."""
-    return re.sub(r"@\w+:[^:@]*:([^@]*)@", r"\1", message or "")
+    """Rule text with ncu's "@<kind>:...@" link markup turned into plain text."""
+    return re.sub(r"@(\w+)(:)([^@]*)@", _link, message or "")
 
 
 def rule_speedups(action):
@@ -463,7 +475,7 @@ def stall_reason_names():
 
 
 def warp_state_timeline(action, buckets):
-    """Stall reasons over the kernel's run, from its timed warp samples (SourceCounters).
+    """Stall reasons over the kernel's run, from its timed warp samples (PmSampling).
 
     Returns (span_ns, {reason: [share of the samples in each time bucket]}), or None
     when the report has no timed warp samples.

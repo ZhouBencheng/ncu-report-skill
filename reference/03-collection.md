@@ -44,11 +44,12 @@ Each entry has the kernel's function name (what `-k` matches), its launch shape,
 
 ## Recipe 1: Full profile (the one report the analysis needs)
 
-Collects every standard section — SOL, occupancy, memory, compute, scheduler, warp state, the per-PC stall samples and timed warp samples (SourceCounters) and the PM-sampling timelines:
+Collects every standard section — SOL, occupancy, memory, compute, scheduler, warp state, the per-PC stall samples (SourceCounters) and the PM-sampling timelines and timed warp samples (PmSampling):
 
 ```bash
 ncu --set full \
     --import-source yes \
+    --clock-control boost \
     -k "regex:KERNEL_REGEX" \
     -c 1 \
     -o "$PROFILE_RUN_DIR/reports/full_<tag>.ncu-rep" \
@@ -58,6 +59,7 @@ ncu --set full \
 | Flag | Meaning |
 |---|---|
 | `--set full` | Every built-in section, including `SourceCounters` and `PmSampling` |
+| `--clock-control boost` | Locks the clock at boost for each profiled kernel (the default in ncu 2026.1–2026.3); named so the command records it. See [GPU clocks](#gpu-clocks) |
 | `--import-source yes` | Embeds the CUDA source files into the report, so the source view works where the source is not (another machine, a container). The files are read where ncu runs, at collection only (it cannot be added to an existing report): when the paths recorded by the build do not exist there, pass `--source-folders DIR,...` with directories visible to that machine or container |
 | `-k "regex:..."` | Only profile kernels whose name matches: the function name by default (`my_kernel`), the full demangled name (`void my_kernel<(int)8>(float *)`) with `--kernel-name-base demangled`. Reduces replay count. |
 | `-c 1` | Only profile the first matching kernel launch. Avoids duplicates when the kernel is called in a loop. |
@@ -146,11 +148,11 @@ Takes one or two replay passes. Prints a table directly to stdout. No `-o` outpu
 
 ```bash
 # Before
-ncu --set full -k "regex:my_kernel" -c 1 \
+ncu --set full --import-source yes --clock-control boost -k "regex:my_kernel" -c 1 \
     -o "$PROFILE_RUN_DIR/reports/v1.ncu-rep" ./harness_v1 [args]
 
-# After
-ncu --set full -k "regex:my_kernel" -c 1 \
+# After: the same options, so the reports compare
+ncu --set full --import-source yes --clock-control boost -k "regex:my_kernel" -c 1 \
     -o "$PROFILE_RUN_DIR/reports/v2.ncu-rep" ./harness_v2 [args]
 ```
 
@@ -183,11 +185,11 @@ ncu 2026.3:
 | `basic` (default) | LaunchStats, Occupancy, SpeedOfLight, WorkloadDistribution | Smoke test — is ncu working at all? |
 | `detailed` | basic + ComputeWorkloadAnalysis, MemoryWorkloadAnalysis (+ chart), SourceCounters, SpeedOfLight_RooflineChart, Tile | Middle ground |
 | `full` | everything above + InstructionStats, MemoryWorkloadAnalysis_Tables, NumaAffinity, Nvlink_Tables / _Topology, PmSampling, SchedulerStats, the hierarchical roofline charts, WarpStateStats, gr10x_UTCMMA_Inference / _Training | First-pass profile. Always start here. |
-| `pmsampling` | PmSampling, gr10x_UTCMMA_Inference, gr10x_UTCMMA_Training | Timelines only |
+| `pmsampling` | PmSampling, gr10x_UTCMMA_Inference, gr10x_UTCMMA_Training | Timelines only (the PM series and the timed warp samples) |
 | `roofline` | SpeedOfLight + the roofline charts, WorkloadDistribution | Roofline only |
 | `nvlink` | Nvlink, Nvlink_Tables, Nvlink_Topology | Multi-GPU traffic |
 
-ncu 2026.3 removed the `PmSampling_WarpStates` section of 2026.1 (`--section PmSampling_WarpStates` is an error there); the stall reasons over time come from the timed warp samples of SourceCounters instead (`plot_timeline.py`). With ncu 2026.1, add `--section PmSampling_WarpStates` for its stall-reason PM series.
+ncu 2026.3 removed the `PmSampling_WarpStates` section of 2026.1 (`--section PmSampling_WarpStates` is an error there); the stall reasons over time come from the timed warp samples of PmSampling instead (`plot_timeline.py`). With ncu 2026.1, add `--section PmSampling_WarpStates` for its stall-reason PM series.
 
 ---
 
@@ -197,7 +199,7 @@ ncu 2026.3 removed the `PmSampling_WarpStates` section of 2026.1 (`--section PmS
 # NVLink bandwidth (if profiling multi-GPU; Nvlink_Tables / _Topology are in --set full)
 --section Nvlink
 
-# Chip-to-chip link traffic (2026.3; on systems that have the link)
+# Chip-to-chip link traffic (on systems that have the link)
 --section C2CLink
 ```
 
@@ -222,14 +224,14 @@ A report with several launches holds one action per launch; the helpers analyze 
 
 ncu fixes the clock itself: it locks the GPU clock for every profiled kernel and restores it after, so durations and
 throughputs are comparable between runs. The default is `--clock-control boost` in ncu 2026.1–2026.3 and `base` in older
-versions (`ncu --help` shows it); on a B300, `base` (~1.07 GHz) made kernels ~1.7x slower than `boost` (~1.9 GHz).
+versions (`ncu --help` shows it); on a B300, `base` (~1.06 GHz) made kernels ~1.7x slower than `boost` (~2.0 GHz).
 Name the setting in the command so the report says what it ran at. No outer lock is needed.
 
 To profile at a fixed clock of your own (to match the clock a timing A/B ran at), lock it around the command and pass
 `--clock-control none`; without it, ncu replaces your lock with its own:
 
 ```bash
-# check with nvidia-smi -q -d CLOCK; an environment that locks clocks for you replaces these two lines
+# or lock it the way your system provides; check with nvidia-smi -q -d CLOCK
 sudo nvidia-smi -lgc <mhz>,<mhz>
 ncu --clock-control none --set full ... ./harness [args]
 sudo nvidia-smi -rgc
@@ -243,6 +245,6 @@ Read the clock a report ran at from `sm__cycles_elapsed.avg.per_second` (in `met
 
 - **Profile run time blows up with `--set full`**: that's normal, each replay is a full kernel execution.
 - **`regex:...` doesn't match anything**: `-k` matches the kernel's function name by default (`--kernel-name-base function`): `my_kernel` for `void my_kernel<(int)8, (int)256>(float *)`. To tell template instances apart, add `--kernel-name-base demangled` and match the full name. List the names with the survey (Recipe 0) or `cuobjdump -res-usage ./harness | grep Function | cu++filt`.
-- **Report file is empty / 0 KB**: profile terminated before the kernel launched. Usually means `-k` regex didn't match, or the harness crashed.
+- **No report file**: ncu writes none when it profiled nothing (`==WARNING== No kernels were profiled.`): the `-k` regex didn't match, `-c`/`--launch-skip` skipped past the launches, or the program exited before the kernel ran. ncu does not overwrite an existing report either (`==ERROR== File ... already exists`): pass `-f`, or give each run its own name.
 - **PM Sampling returns nothing**: check the report came from `--set full` (or `--section PmSampling`) and the GPU isn't a vGPU (vGPU doesn't support PM sampling). `plot_timeline.py --list` shows the series a report has.
 - **"Could not deploy stock section files to $HOME"**: set `HOME` to a writable directory first.

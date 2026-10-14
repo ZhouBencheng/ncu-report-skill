@@ -107,7 +107,7 @@ timelines = action.timelines()                     # ITimelines, or None
 aligned = timelines.aligned_metric(m)              # IMetric with aligned instances / correlation ids, or None
 ```
 
-The stall reasons over time are in `action.timed_warp_samples()`: one dict per sample, `{timestamp, pc, stall_reason, not_issued}`, with `stall_reason` an `ncu_report.StallReason_*` code (SourceCounters, in `--set full`). `ncu_utils.warp_state_timeline(action, buckets)` turns them into the share of each reason per time bucket.
+The stall reasons over time are in `action.timed_warp_samples()`: one dict per sample, `{timestamp, pc, stall_reason, not_issued}`, with `stall_reason` an `ncu_report.StallReason_*` code (PmSampling section, in `--set full`). `ncu_utils.warp_state_timeline(action, buckets)` turns them into the share of each reason per time bucket.
 
 ---
 
@@ -261,7 +261,7 @@ for rr in action.rule_results():
     print(f"    {msg.get('message', '')[:200]}")
 ```
 
-The speedup is already a percentage. `rule_results_as_dicts()` returns the same as plain dicts (`rule_identifier`, `name`, `section_identifier`, `rule_message`, `speedup_estimation`, `focus_metrics`), leaving out what a rule does not have. `ncu_utils.rule_speedups(action)` returns them sorted, highest speedup first, with the message's `@section:...@` link markup removed.
+The speedup is already a percentage. `rule_results_as_dicts()` returns the same as plain dicts (`rule_identifier`, `name`, `section_identifier`, `rule_message`, `speedup_estimation`, `focus_metrics`, `result_tables`), leaving out what a rule does not have. `ncu_utils.rule_speedups(action)` returns them sorted, highest speedup first, with the message's `@section:...@` / `@url:...@` link markup turned into plain text.
 
 ---
 

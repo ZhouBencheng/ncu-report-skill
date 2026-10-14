@@ -42,7 +42,7 @@ Harmless. The `ctc__*` metrics count chip-to-chip (C2C) link traffic; a system w
 
 ### `No source files were imported` / `Failed to import the following source files`
 
-`--import-source yes` reads the source where ncu runs, at collection time, from the paths the build recorded (`ncu --import ... --page source` shows them). If those paths do not exist there — a prebuilt library, a build directory that is gone, a GPU job in another container — fetch the matching source somewhere ncu can see and pass `--source-folders` (searched recursively), then collect again: the source cannot be added to an existing report. A kernel without line info has no source to import.
+`--import-source yes` reads the source where ncu runs, at collection time, from the paths the build recorded (`ncu --import ... --page source` shows them). If those paths do not exist there — a prebuilt library, a build directory that is gone, a run in another container — fetch the matching source somewhere ncu can see and pass `--source-folders` (searched recursively), then collect again: the source cannot be added to an existing report. A kernel without line info has no source to import.
 
 ### `Could not deploy stock section files to "/home/USER/Documents/NVIDIA Nsight Compute/..."`
 
@@ -58,7 +58,7 @@ This warning is harmless but noisy. ncu falls back to reading from the CUDA inst
 
 ## ncu hangs and profiles nothing
 
-`ncu ... uv run python app.py` never profiles a kernel and never returns: ncu injects into the launcher, and the program under it does not get through. Put ncu inside the launcher (`uv run ncu ... python app.py`) or give it the interpreter directly (`ncu ... .venv/bin/python app.py`). Bound first runs with `timeout` so a stuck one does not use up a GPU job.
+`ncu ... uv run python app.py` never profiles a kernel and never returns: ncu injects into the launcher, and the program under it does not get through. Put ncu inside the launcher (`uv run ncu ... python app.py`) or give it the interpreter directly (`ncu ... .venv/bin/python app.py`). Bound first runs with `timeout` so a stuck one does not hold the GPU.
 
 ---
 
@@ -92,13 +92,13 @@ For JIT / framework-integrated builds:
 
 ## Source view shows only CUTLASS / CuTe / library headers
 
-ncu maps most PCs to their **innermost** inlined frame. In template-heavy code nearly every instruction is inlined from a library header (`mma_sm80.hpp` for every HMMA, `barrier.h` for every mbarrier wait), so the hottest "lines" are the same headers for every kernel. Pass the profiled binary (executable, `.so` or cubin) to `extract_stall_hotspots.py --binary`: it reads the full inline chain with `nvdisasm -gi` and ranks the lines in the kernel function itself. It reports how many sampled PCs' SASS matched the report; a mismatch means the binary is not the one that was profiled.
+ncu maps most PCs to their **innermost** inlined frame. In template-heavy code nearly every instruction is inlined from a library header (`mma_sm80.hpp` for every HMMA, `barrier.h` for every mbarrier wait), so the hottest "lines" are the same headers for every kernel. Pass the profiled binary (executable, `.so` or cubin) to `extract_stall_hotspots.py --binary`: it reads the full inline chain with `nvdisasm -gi` and ranks the lines in the kernel function itself. It reports how many sampled PCs' SASS matched the report; a mismatch means the binary is not the one that was profiled. Triton records no inline frames for `tl.*` calls, so for a Triton kernel that section can rank Triton's own library code (`standard.py` for a reduction) next to the kernel's lines: read those as the `tl.*` call on the kernel line that uses them.
 
 ---
 
 ## PM sampling returns nothing
 
-1. **You didn't request it.** `--set full` includes the PmSampling section. (`--section PmSampling_WarpStates`, for stall-reason series, exists only before ncu 2026.3; there the stall reasons over time come from the timed warp samples.)
+1. **You didn't request it.** `--set full` includes the PmSampling section. (`--section PmSampling_WarpStates`, for stall-reason series, exists only before ncu 2026.3; from 2026.3 the stall reasons over time come from the timed warp samples of PmSampling.) `plot_timeline.py --list` prints the series a report has and its number of timed warp samples.
 2. **vGPU / MIG environment.** PM sampling isn't supported under virtualization. Use metric-based (non-timeline) analysis only.
 3. **Kernel too short.** Kernels under ~20 µs produce few PM samples; what comes back is dominated by warmup noise.
 4. **You asked for a name the report does not have.** ncu 2026.1 and 2026.3 name the PmSampling series `<UNIT>.<group>.<metric>` (e.g. `TPC.TriageCompute.sm__cycles_active.avg.per_cycle_elapsed`); `pmsampling:sm__throughput.*` and `pmsampling:dram__throughput.*` from older docs do not exist. `plot_timeline.py --list` prints what the report has.
@@ -142,7 +142,7 @@ def safe(action, name, default=None):
 `ncu_report.py` ships in `<Nsight Compute install>/extras/python`. The helpers find the install from the `ncu` on PATH, as the CUDA toolkit's `ncu` launcher does (`/opt/nvidia/nsight-compute/<version>` for .deb/.rpm installs, `<toolkit>/nsight-compute-<version>` for .run installs; the newest wins):
 
 ```bash
-python3 <skill>/helpers/ncu_utils.py      # prints where it found ncu_report, or why not
+python3 <skill>/helpers/ncu_utils.py      # prints where it found ncu_report; raises ImportError if it found none
 ```
 
 If `ncu` is not on PATH or the install is elsewhere, put its `extras/python` on `PYTHONPATH` yourself. If there's still an `ImportError`, check that the module is compatible with your Python version.

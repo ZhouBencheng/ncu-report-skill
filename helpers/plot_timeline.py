@@ -7,7 +7,7 @@ pipeline bubbles, and sawtooth patterns that are invisible in aggregate metrics.
 
 The series come from the PmSampling section (part of `--set full`), named
 `<UNIT>.<group>.<metric>` (e.g. `TPC.TriageCompute.sm__cycles_active...`);
-`--list` prints the series a report has. With ncu_report 2026.3+ each series is
+`--list` prints the series a report has and its number of timed warp samples. With ncu_report 2026.3+ each series is
 aligned to the workload's timestamps.
 
 ncu collects the series over replays of the kernel, and each replay has its own
@@ -16,8 +16,8 @@ over the window where any of them is non-zero, so their shapes line up. Series
 of different replays do not line up sample for sample — compare their shapes,
 not positions.
 
-The stall reasons over time come from the timed warp samples of the
-SourceCounters section (also in `--set full`): the share of samples in each time
+The stall reasons over time come from the timed warp samples the same
+section holds: the share of samples in each time
 bucket per reason, over the span the kernel had warps resident. (Reports of ncu
 before 2026.3 may also have `pmsampling:smsp__warps_issue_stalled_*` series, from
 the PmSampling_WarpStates section; they are plotted as PM series.)
@@ -140,7 +140,7 @@ def main():
                     help="Regex on series names (repeatable); replaces the default list.")
     ap.add_argument("--kernel", type=str, default=None,
                     help="Regex on the kernel's function or demangled name: keep only matching kernels.")
-    ap.add_argument("--list", action="store_true", help="Print the series each report has and exit.")
+    ap.add_argument("--list", action="store_true", help="Print the series and timed warp sample count of each report and exit.")
     ap.add_argument("--stall-reasons", type=int, default=6,
                     help="How many of the most sampled stall reasons to plot over time (0: none).")
     ap.add_argument("--rows", type=int, default=20)
@@ -149,6 +149,8 @@ def main():
 
     if len(args.report) != len(args.tag):
         ap.error("--report and --tag counts must match")
+    if len(set(args.tag)) != len(args.tag):
+        ap.error("each --tag must be different: outputs are named after it")
 
     patterns = [re.compile(p) for p in (args.metric or DEFAULT_PATTERNS)]
     analysis_dir = args.run_dir / "analysis"
@@ -165,7 +167,7 @@ def main():
         for action, t in zip(acts, action_tags(tag, acts)):
             names = pm_series_names(action)
             if args.list:
-                print(f"[{t}] {len(names)} series")
+                print(f"[{t}] {len(names)} series, {len(action.timed_warp_samples())} timed warp samples")
                 print("\n".join(f"  {n}" for n in names))
                 continue
             warp_states = plot_warp_states(action, args.rows, args.cols, args.stall_reasons) \

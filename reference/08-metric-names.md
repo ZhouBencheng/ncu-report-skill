@@ -206,7 +206,7 @@ SM_A.TriageCompute.sm__mem_tensor_cycles_active_realtime.avg.pct_of_peak_sustain
 SM_A.TriageCompute.l1tex__throughput.avg.pct_of_peak_sustained_elapsed    # 2026.1 only
 ```
 
-ncu 2026.3 has no stall-reason PM series: the stall reasons over time come from the timed warp samples (`action.timed_warp_samples()`, SourceCounters section), which `plot_timeline.py` plots. ncu 2026.1's PmSampling_WarpStates section (`--section PmSampling_WarpStates`, removed in 2026.3) gave them as series:
+ncu 2026.3 has no stall-reason PM series: the stall reasons over time come from the timed warp samples (`action.timed_warp_samples()`, PmSampling section), which `plot_timeline.py` plots. ncu 2026.1's PmSampling_WarpStates section (`--section PmSampling_WarpStates`, removed in 2026.3) gave them as series:
 ```
 pmsampling:smsp__warps_issue_stalled_long_scoreboard.avg
 pmsampling:smsp__warps_issue_stalled_short_scoreboard.avg
@@ -219,7 +219,7 @@ pmsampling:smsp__warps_issue_stalled_lg_throttle.avg
 ...                                                  # one per stall reason
 ```
 
-`plot_timeline.py --list` prints every series a report has. The sample interval was ~1 µs on a B300: a kernel shorter than ~20 µs gives few samples.
+`plot_timeline.py --list` prints every series a report has, and its number of timed warp samples. The sample interval was ~1 µs on a B300: a kernel shorter than ~20 µs gives few samples.
 
 ---
 

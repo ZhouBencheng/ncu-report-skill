@@ -60,7 +60,7 @@ Keeps the skill version-controlled and easy to update; edits in the clone are pi
 
 ```bash
 # Clone somewhere stable
-git clone git@github.com:DongyunZou/ncu-report-skill.git ~/workspace/ncu-report-skill
+git clone https://github.com/mit-han-lab/ncu-report-skill.git ~/workspace/ncu-report-skill
 
 # User-level install: make the skill available in every project
 mkdir -p ~/.claude/skills
@@ -79,7 +79,7 @@ Pull updates with `cd ~/workspace/ncu-report-skill && git pull`. The symlinks pi
 If you prefer a static copy over a symlink:
 
 ```bash
-git clone git@github.com:DongyunZou/ncu-report-skill.git /tmp/ncu
+git clone https://github.com/mit-han-lab/ncu-report-skill.git /tmp/ncu
 mkdir -p ~/.claude/skills
 cp -r /tmp/ncu ~/.claude/skills/ncu-report-skill
 ```
@@ -88,7 +88,7 @@ cp -r /tmp/ncu ~/.claude/skills/ncu-report-skill
 
 ```bash
 cd /path/to/other-repo
-git submodule add git@github.com:DongyunZou/ncu-report-skill.git .claude/skills/ncu-report-skill
+git submodule add https://github.com/mit-han-lab/ncu-report-skill.git .claude/skills/ncu-report-skill
 git commit -m "Add ncu-report-skill as a submodule"
 ```
 
