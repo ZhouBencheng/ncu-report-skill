@@ -68,7 +68,8 @@ There is no single "imbalance" metric — use these signals together:
 # These show as "max XX% above average, min YY% below average" in details page
 sm__cycles_active.{avg,max,min,sum}       # via action.source_info or the details page
 
-# PM sampling (time series) — the shape matters, not just the mean
+# PM sampling (time series) — these are STALL-REASON series (not utilization);
+# their shape is a hint about stall composition over time, not an SM-fill level.
 pmsampling:smsp__warps_issue_stalled_long_scoreboard.avg
 pmsampling:smsp__warps_issue_stalled_short_scoreboard.avg
 pmsampling:smsp__warps_issue_stalled_wait.avg
@@ -76,12 +77,17 @@ pmsampling:smsp__warps_issue_stalled_wait.avg
 
 **Reading:**
 
-- NCU's `details` page already says it: `"One or more SMs have a much lower number of active cycles than the average. Maximum instance value is X% above, while the minimum is Y% below."` X=51% / Y=95% (seen in practice) means severe imbalance.
-- Render the PM-sampling time series (use `plot_timeline.py`). Possible shapes:
-  - **Flat high → clean drop**: ideal. Well-balanced, good SM fill.
-  - **Flat high → gradual tail**: tail effect. The tail's length is how much time a few slow blocks waste. Usually caused by variable-length inputs (e.g. seq_len varies per batch element).
-  - **Flat low**: grid is too small (Dimension 1).
-  - **Periodic waves / sawtooth**: pipeline bubbles — compute and memory alternate, nothing overlaps.
+- NCU's `details` page already says it: `"One or more SMs have a much lower number of active cycles than the average. Maximum instance value is X% above, while the minimum is Y% below."` X=51% / Y=95% (seen in practice) means severe imbalance. This `sm__cycles_active` distribution is the actual imbalance evidence.
+- Render the PM-sampling time series (use `plot_timeline.py`). These are stall-reason
+  curves: a level or slope in them is a **hypothesis**, not a measurement of SM
+  utilization or of how long a tail wasted. Corroborate any shape read against an
+  actually-available utilization/activity series (e.g. the `sm__cycles_active`
+  distribution above, or a populated `pmsampling:sm__throughput.*` when present)
+  plus per-block/per-SM evidence before concluding. Possible shapes:
+  - **Flat high → clean drop**: *consistent with* a well-balanced run — confirm SM fill with the activity series, do not infer it from stall curves alone.
+  - **Flat high → gradual tail**: *suggests* a tail effect. The tail's wall-clock **duration** needs a time-resolved trace or explicit timing (event timing, or a time-axis sample series) — not the stall-curve slope and not an aggregate `sm__cycles_active` figure, which is a per-SM distribution with no time axis and only corroborates imbalance. Tails are usually caused by variable-length inputs (e.g. seq_len varies per batch element).
+  - **Flat low**: *consider* a too-small grid (Dimension 1) — verify with occupancy/active-SM counts, since low stall sampling alone does not establish low utilization.
+  - **Periodic waves / sawtooth**: *consistent with* pipeline bubbles — compute and memory alternate; corroborate with the relevant activity series.
 
 **Where imbalance typically comes from:**
 
@@ -91,7 +97,7 @@ pmsampling:smsp__warps_issue_stalled_wait.avg
 
 **Fix direction:** chunk the variable-length work (e.g., time-chunking for sequence-style workloads), or oversubscribe with work-stealing.
 
-**Helper:** `plot_timeline.py` produces ASCII timeline plots. If you see a gradual slope on the right side, that's your tail effect.
+**Helper:** `plot_timeline.py` produces ASCII timeline plots. A gradual slope on the right side is *consistent with* a tail effect — confirm it and measure its duration with a time-resolved trace or explicit timing, rather than reading the tail's cost off the slope.
 
 Additionally, **always inspect the input distribution**. If per-CTA work is driven by an array like `per_element_lengths`:
 ```python
@@ -130,9 +136,14 @@ smsp__pcsamp_sample_count                                  # total samples
 smsp__pcsamp_warps_issue_stalled_long_scoreboard           # per-PC counts
 smsp__pcsamp_warps_issue_stalled_short_scoreboard
 smsp__pcsamp_warps_issue_stalled_wait
-smsp__pcsamp_warps_issue_stalled_selected                  # productive cycles
+smsp__pcsamp_warps_issue_stalled_selected                  # warp was selected to issue at the sampled PC (a sample COUNT, not a productive-cycle total)
 ...
 ```
+
+These `pcsamp_*` metrics are counts of statistically sampled warp states at a PC
+(from `--set source`), **not** cycle totals — and they are a different series from
+the `pmsampling:` PM timeline (Dimension 7). Do not read a sample count as a
+productive-cycle or stall-cycle total, and do not mix the two series.
 
 **Stall reasons you need to know:**
 
@@ -146,20 +157,26 @@ smsp__pcsamp_warps_issue_stalled_selected                  # productive cycles
 | `math_pipe_throttle` | FMA pipe saturated | legit compute-bound | you're doing well, find other wins |
 | `mio_throttle` / `lg_throttle` / `tex_throttle` | LSU/LD-ST/TEX pipe saturated | too many load/store insns | vectorize, use shared mem |
 | `not_selected` | eligible but scheduler picked another | **good sign** — plenty of parallelism | ignore |
-| `selected` | actually issuing this cycle | **productive** | ignore |
+| `selected` | warp was selected to issue in the sampled cycle | a sample count of the issuing case — not a productive-cycle total | ignore |
 | `dispatch_stall` | dispatch unit busy | rare | usually minor |
 | `no_instruction` | warp has nothing to issue | kernel prologue/epilogue | usually minor |
 | `drain` | warp finishing last few instructions | end of kernel | ignore |
 | `branch_resolving` | branch target calc in progress | tight branches | usually minor |
 
-**Reading the ratio metric:** a value of e.g. `smsp__average_warps_issue_stalled_long_scoreboard_per_issue_active.ratio = R` means: for every cycle in which a warp issues, R other warps (on that SM sub-partition, per cycle-with-an-issue) were stalled on `long_scoreboard`. Higher values = more stalled time. On a kernel with 16 active warps per scheduler, R is bounded above by ~15 (all other warps stalled on this reason).
+**Reading the ratio metric:** a value of e.g. `smsp__average_warps_issue_stalled_long_scoreboard_per_issue_active.ratio = R` is a per-issue-active average: higher R means more warp-cycles were spent stalled on `long_scoreboard` relative to issuing cycles. Higher values = more stalled time.
+
+> **Do not impose a warp-count bound on this ratio.** It is *not* capped at the resident-warp count: a large value (e.g. `236.7`) is a legitimate reading when issuing cycles are sparse, and must not be rejected or clamped merely because it exceeds some expected small bound like `15`. That normalization assumption is unfounded — treat the native value as reported.
+
+> **Sampled stalls attribute to the CONSUMER, not the producer.** `pcsamp` records the stall at the instruction that is *waiting* (the sampled PC), not at the instruction that will satisfy the dependency. You cannot infer the producer's latency or identity from a consumer PC sample; find the producing load/op separately rather than attributing it to the sampled line.
 
 **Reading the `pcsamp` percentages:** normalize by `smsp__pcsamp_sample_count` to get "% of samples stalled on X". Rules of thumb:
 
 - **`long_scoreboard` > 40% of samples**: kernel is memory-latency-bound. Check Dimension 6 (access patterns) next.
 - **`short_scoreboard` > 30%**: check for long dep chains or heavy shared-memory use.
 - **`barrier` > 20%**: too much synchronization, or warp divergence before a barrier.
-- **`selected` < 10%**: very little actual issue — the whole kernel is stall-bound.
+- **`selected` < 10% of samples**: in few sampled cycles was a warp selected to
+  issue (this is a fraction of samples, not a productive-cycle total) — the kernel
+  is largely stall-bound.
 
 **Helper:** `extract_stall_hotspots.py` produces `stall_hotspots_<tag>.txt` which ranks source lines by total stall samples. This directly points at the offending `LDG`, `BAR.SYNC`, or compute op in source.
 

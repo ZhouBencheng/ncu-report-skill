@@ -1,6 +1,6 @@
 # ncu-report-skill
 
-A Claude Code skill for profiling CUDA kernels with Nsight Compute on NVIDIA B200 (sm_100). Covers the full workflow: build a standalone harness, run `ncu`, parse reports with the Python API, walk through six analysis dimensions, match patterns to a diagnosis playbook, and write an evidence-backed optimization report.
+A Claude Code skill for profiling CUDA kernels with Nsight Compute on NVIDIA Thor (sm_110) and B200 (sm_100). Covers the full workflow: build a standalone harness, run `ncu`, parse reports with the Python API, walk through six analysis dimensions, match patterns to a diagnosis playbook, and write an evidence-backed optimization report. On Thor, run the SM110 preflight (`SKILL.md`, `references/03-collection.md`) and record the actual device resource facts; the B200 resource numbers (148 SMs, 192 GB HBM3e) are B200-specific.
 
 The skill is self-contained: reference docs, executable Python scripts, and reusable CUDA / C++ assets all ship in this repo.
 
@@ -103,7 +103,7 @@ The Python helpers work standalone for any `.ncu-rep` you have:
 
 ```bash
 # Make sure ncu_report is importable (the helpers try common paths automatically)
-export PYTHONPATH=$PYTHONPATH:/usr/local/cuda-13.2/nsight-compute-2026.1.0/extras/python
+export PYTHONPATH=$PYTHONPATH:/opt/nvidia/nsight-compute/2026.1.1/extras/python
 
 # Create a run directory
 export RUN=/path/to/your/profile/myrun
@@ -140,7 +140,16 @@ The C++ harness template + safetensors loader live under `assets/`; copy them in
 - The `ncu_report` Python module (ships with Nsight Compute under `extras/python/`)
 - An NVIDIA GPU with permission to access performance counters (see `references/09-common-issues.md` if `ncu` reports `ERR_NVGPUCTRPERM`)
 
-The skill is optimized for B200 / sm_100 metric names, but the workflow and helpers work on any CUDA GPU Nsight Compute supports. Metric names may differ on older GPUs (A100, H100) — see `references/08-b200-metric-names.md` for guidance.
+The default metric list and tuning guidance target B200 / sm_100. Other GPUs require checking the installed tool's sections and the report's actual metrics; the B200 reference is not a compatibility guarantee.
+
+On Thor, a self-checking native CUDA harness compiled and ran for `sm_110` and `sm_110a` using CUDA 13.2 (nvcc V13.2.86). With authorized performance-counter access, NCU 2026.1.1.0 collected reports for both binaries; the candidate scripts extracted key metrics, comparisons and stall samples attributed to seven source lines per report. Each report contained 15 PM metrics with readable samples, but none of the plotter's default metrics. Use an observed metric with the existing `--metric` option; see [`references/04-python-api.md`](references/04-python-api.md). These observations are limited to this harness and these reports; they do not validate architecture-specific instructions, including tcgen05 or NVFP4, or establish performance differences between targets. B200 defaults remain unchanged.
+
+The helpers also discover the standalone installation layout `/opt/nvidia/nsight-compute/<version>/extras/python`. For the inspected NCU 2026.1.1.0 installation, an explicit process-local import check is:
+
+```bash
+PYTHONPATH=/opt/nvidia/nsight-compute/2026.1.1/extras/python${PYTHONPATH:+:$PYTHONPATH} \
+    python3 -c 'import ncu_report; print(ncu_report.__file__)'
+```
 
 ---
 

@@ -5,9 +5,11 @@
 //     profile/<run_name>/harness/my_kernel_harness.cu
 // and customize the sections marked with TODO(you).
 //
-// Compile with:
+// Compile with (pick the target for your device):
+//     Thor (SM110):  -gencode=arch=compute_110,code=sm_110
+//     B200 (sm_100): -gencode=arch=compute_100,code=sm_100
 //     nvcc -O2 -std=c++17 -lineinfo \
-//          -gencode=arch=compute_100,code=sm_100 \
+//          -gencode=arch=compute_110,code=sm_110 \
 //          my_kernel_harness.cu -o my_kernel_harness
 //
 // Usage modes this template supports:

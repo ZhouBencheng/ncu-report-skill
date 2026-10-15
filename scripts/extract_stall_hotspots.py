@@ -1,14 +1,13 @@
 #!/usr/bin/env python3
 """Aggregate per-PC stall samples into per-source-line hotspots.
 
-Requires:
-    - .ncu-rep collected with `ncu --set source --section SourceCounters`
-    - kernel compiled with `-lineinfo`
-
-Produces in `<run-dir>/analysis/`:
-    stall_hotspots_<tag>.txt — top lines ranked by total stall samples,
-                               with per-stall-type breakdown, plus per-stall
-                               top lines.
+Consumes the detached capture's ``pc_analysis`` (produced once per report in a
+fresh process). The capture already aggregates ordinary stall states per PC
+without zero-fill or top-k truncation, keeps the not-issued (overlapping) subset
+OUT of the totals, and records whether each PC mapped to a source line. This CLI
+rolls those rows up by source line for EVERY range/action and reports true
+coverage; PCs that did not map (e.g. a report compiled without ``-lineinfo``) are
+retained and reported as source-mapping-unavailable rather than fabricated.
 
 Usage:
     python3 extract_stall_hotspots.py --run-dir profile/myrun \\
@@ -23,123 +22,81 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
-from ncu_utils import load_action, metric_value_at  # noqa: E402
-
-
-STALL_METRICS = [
-    "smsp__pcsamp_warps_issue_stalled_long_scoreboard",
-    "smsp__pcsamp_warps_issue_stalled_short_scoreboard",
-    "smsp__pcsamp_warps_issue_stalled_wait",
-    "smsp__pcsamp_warps_issue_stalled_math_pipe_throttle",
-    "smsp__pcsamp_warps_issue_stalled_mio_throttle",
-    "smsp__pcsamp_warps_issue_stalled_lg_throttle",
-    "smsp__pcsamp_warps_issue_stalled_not_selected",
-    "smsp__pcsamp_warps_issue_stalled_dispatch_stall",
-    "smsp__pcsamp_warps_issue_stalled_drain",
-    "smsp__pcsamp_warps_issue_stalled_no_instructions",
-    "smsp__pcsamp_warps_issue_stalled_selected",
-    "smsp__pcsamp_warps_issue_stalled_branch_resolving",
-    "smsp__pcsamp_warps_issue_stalled_barrier",
-    "smsp__pcsamp_warps_issue_stalled_tex_throttle",
-    "smsp__pcsamp_warps_issue_stalled_sleeping",
-    "smsp__pcsamp_warps_issue_stalled_misc",
-    "smsp__pcsamp_warps_issue_stalled_membar",
-]
-
-
-def collect_per_pc(action):
-    """Return dict[pc] -> dict[stall_name -> count]."""
-    per_pc = defaultdict(lambda: defaultdict(int))
-    for sn in STALL_METRICS:
-        try:
-            m = action[sn]
-        except Exception:
-            continue
-        try:
-            n = m.num_instances()
-        except Exception:
-            continue
-        if n == 0 or not m.has_correlation_ids():
-            continue
-        cor = m.correlation_ids()
-        for i in range(n):
-            try:
-                pc = cor.as_uint64(i)
-            except Exception:
-                try:
-                    pc = int(cor.as_double(i))
-                except Exception:
-                    continue
-            v = metric_value_at(m, i)
-            if v:
-                per_pc[pc][sn] += int(v)
-    return per_pc
-
-
-def aggregate_by_source_line(action, per_pc):
-    per_line = defaultdict(lambda: defaultdict(int))
-    for pc, stalls in per_pc.items():
-        try:
-            si = action.source_info(pc)
-            if si is None:
-                file_, line = "?", 0
-            else:
-                file_, line = si.file_name(), si.line()
-        except Exception:
-            file_, line = "?", 0
-        for sn, v in stalls.items():
-            per_line[(file_, line)][sn] += v
-    return per_line
+from ncu_utils import action_name, action_slug, load_capture, select_actions  # noqa: E402
 
 
 def short_stall_name(full):
     return full.replace("smsp__pcsamp_warps_issue_stalled_", "")
 
 
-def write_report(per_line, out_path, tag, top_n=30):
-    totals = []
-    for (f_, ln), stalls in per_line.items():
-        total = sum(stalls.values())
-        totals.append((total, f_, ln, dict(stalls)))
+def rollup(action):
+    """Return (per_line, unmapped_pcs, pca) from the capture's pc_analysis.
+
+    per_line: dict[(file, line)] -> dict[stall -> count] for mapped PCs.
+    unmapped_pcs: list of (pc, total, stalls) for PCs with no source line.
+    """
+    pca = action.get("pc_analysis") or {}
+    per_line = defaultdict(lambda: defaultdict(int))
+    unmapped = []
+    for row in pca.get("rows") or []:
+        stalls = row.get("ordinary_states") or {}
+        if row.get("source_mapped") and isinstance(row.get("source"), dict):
+            key = (row["source"].get("file"), row["source"].get("line"))
+            for sn, v in stalls.items():
+                per_line[key][sn] += v
+        else:
+            unmapped.append((row.get("pc"), row.get("ordinary_state_samples", 0), stalls))
+    return per_line, unmapped, pca
+
+
+def write_report(per_line, unmapped, pca, out_path, label, top_n=30):
+    totals = [(sum(s.values()), f_, ln, dict(s)) for (f_, ln), s in per_line.items()]
     totals.sort(key=lambda x: -x[0])
 
     with open(out_path, "w") as f:
-        f.write(f"===== Stall hotspots for {tag} =====\n")
-        f.write(f"Total distinct (file, line) entries: {len(totals)}\n\n")
+        f.write(f"===== Stall hotspots for {label} =====\n")
+        f.write(f"Ordinary stall states exclude the not-issued subset: "
+                f"{pca.get('overlapping_not_issued_names_excluded_from_totals') or []}\n")
+        total_samples = pca.get("ordinary_state_samples")
+        coverage = pca.get("sample_coverage")
+        f.write(f"Total PCs: {pca.get('pc_count')}  "
+                f"mapped PCs: {pca.get('mapped_pc_count')}  "
+                f"ordinary-state samples: {total_samples}  "
+                f"source coverage: {coverage}\n")
+        f.write(f"Distinct mapped (file, line) entries: {len(totals)}\n\n")
+
         f.write(f"{'Rank':>4} {'Total':>10} {'File':<30} {'Line':>5}  Breakdown (stall: count)\n")
         f.write("-" * 150 + "\n")
         for i, (total, fn, ln, stalls) in enumerate(totals[:top_n]):
             short = Path(str(fn)).name if fn and fn != "?" else "?"
-            breakdown = ", ".join(
-                f"{short_stall_name(k)}: {v}"
-                for k, v in sorted(stalls.items(), key=lambda x: -x[1]) if v
-            )
+            breakdown = ", ".join(f"{short_stall_name(k)}: {v}"
+                                  for k, v in sorted(stalls.items(), key=lambda x: -x[1]))
             f.write(f"{i:>4} {total:>10} {short:<30} {ln:>5}  {breakdown}\n")
 
-        f.write("\n\n===== Per-stall-type top lines =====\n")
-        for sn in STALL_METRICS:
-            items = [((fn, ln), s.get(sn, 0)) for (fn, ln), s in per_line.items()]
-            items = [it for it in items if it[1] > 0]
-            items.sort(key=lambda x: -x[1])
-            if not items:
-                continue
-            f.write(f"\n--- {short_stall_name(sn)} ---\n")
-            for (fn, ln), v in items[:10]:
-                short = Path(str(fn)).name if fn and fn != "?" else "?"
-                f.write(f"  {v:>8}  {short}:{ln}\n")
+        if unmapped:
+            f.write(f"\n\n===== Source mapping UNAVAILABLE for {len(unmapped)} PC(s) "
+                    f"(e.g. compiled without -lineinfo) =====\n")
+            f.write("PCs are retained with samples; source lines are not fabricated.\n")
+            for pc, tot, _ in sorted(unmapped, key=lambda x: -x[1])[:top_n]:
+                pc_str = hex(pc) if isinstance(pc, int) else str(pc)
+                f.write(f"  {tot:>10}  pc={pc_str}\n")
 
 
-def main():
+def main(argv=None):
     ap = argparse.ArgumentParser()
     ap.add_argument("--run-dir", type=Path, required=True)
-    ap.add_argument("--report", type=Path, action="append", required=True,
-                    help="Path(s) to source-level .ncu-rep file(s). Pass multiple with repeated flag.")
+    ap.add_argument("--report", type=Path, action="append", required=True)
     ap.add_argument("--tag", type=str, action="append", required=True)
+    ap.add_argument("--action", type=str, default=None,
+                    help="Select one action (rXaY or index); default processes all.")
     ap.add_argument("--top", type=int, default=30)
-    args = ap.parse_args()
+    args = ap.parse_args(argv)
 
     if len(args.report) != len(args.tag):
         ap.error("--report and --tag counts must match")
+    if len(set(args.tag)) != len(args.tag):
+        ap.error("--tag values must be unique; a repeated tag would overwrite an "
+                 "earlier report's hotspot output")
 
     analysis_dir = args.run_dir / "analysis"
     analysis_dir.mkdir(parents=True, exist_ok=True)
@@ -148,12 +105,14 @@ def main():
         if not rep.exists():
             print(f"[skip] {rep} not found", file=sys.stderr)
             continue
-        action = load_action(rep)
-        per_pc = collect_per_pc(action)
-        per_line = aggregate_by_source_line(action, per_pc)
-        out = analysis_dir / f"stall_hotspots_{tag}.txt"
-        write_report(per_line, out, tag, top_n=args.top)
-        print(f"[{tag}] -> {out} ({len(per_line)} distinct lines)")
+        capture = load_capture(rep)
+        for action in select_actions(capture, args.action):
+            slug = action_slug(tag, action)
+            per_line, unmapped, pca = rollup(action)
+            out = analysis_dir / f"stall_hotspots_{slug}.txt"
+            write_report(per_line, unmapped, pca, out, f"{slug} ({action_name(action)})",
+                         top_n=args.top)
+            print(f"[{slug}] -> {out} ({len(per_line)} mapped lines, {len(unmapped)} unmapped PCs)")
 
 
 if __name__ == "__main__":

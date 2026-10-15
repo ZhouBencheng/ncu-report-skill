@@ -11,6 +11,10 @@ This document lists the exact `ncu` commands you should run, in what order, and 
 - Writable `$HOME` so ncu can cache section files.
 - Kernel name known (check with `cuobjdump --dump-function-names your_binary` if unsure).
 
+Before using these B200 recipes on Thor, run `ncu --version`, `ncu --list-sets` and `ncu --list-sections`. The inspected NCU 2026.1.1.0 installation lists `SourceCounters`, `PmSampling` and `PmSampling_WarpStates`, but no `source` set. A listed section is not proof of successful collection: inspect the resulting report for metrics, source correlation and sampling instances. Missing measurements must be reported as unavailable, not zero.
+
+> **Jetson AGX Orin (sm_87):** the collector is NCU **2025.2.1** and the report reader is the separate aarch64 `ncu-report==2026.3.1` wheel — not the same tool or version. Use the exact, runnable Orin collect/read recipes in [`10-orin-collector-reader.md`](10-orin-collector-reader.md) instead of the B200/Thor commands here.
+
 Quick permission test:
 ```bash
 ncu --section SpeedOfLight -k "regex:YOUR_KERNEL_NAME" -c 1 ./harness [args]
@@ -61,6 +65,17 @@ ncu --set source \
 ```
 
 Use Recipe 2's output with `extract_stall_hotspots.py` to get per-source-line stall samples.
+
+Use `--set source` only when listed by the installed tool. On the inspected Thor installation, request the available section directly:
+
+```bash
+ncu --config-file off --clock-control none --section SourceCounters \
+    -k "regex:KERNEL_REGEX" -c 1 \
+    -o $PROFILE_RUN_DIR/reports/source_<tag> \
+    ./harness [args]
+```
+
+The inspected Thor harness was collected successfully for both `sm_110` and `sm_110a` with NCU 2026.1.1.0 using `--config-file off --clock-control none --set full --section SourceCounters --section PmSampling --section PmSampling_WarpStates`. This required explicitly authorized performance-counter access after an initial `ERR_NVGPUCTRPERM` denial. Each report contained 2,287 metrics, stall samples attributed to seven source lines, and 15 PM metrics with 252–541 readable samples per metric. The default plotter metrics were absent; this does not mean PM sampling was unavailable. See the Python API reference for selecting a metric actually present in these reports. These observations do not establish source or sampling availability for every workload or section metric.
 
 ---
 
@@ -133,18 +148,27 @@ ncu --set full -k "regex:my_kernel" -c 1 \
     -o $PROFILE_RUN_DIR/reports/v2 ./harness_v2 [args]
 ```
 
-Then use `analyze_reports.py` with multiple tags to produce a side-by-side comparison, or manually:
+Use `analyze_reports.py` with one unique tag per report to produce a side-by-side
+comparison:
 
-```python
-import ncu_report
-r1 = ncu_report.load_report("$PROFILE_RUN_DIR/reports/v1.ncu-rep")
-r2 = ncu_report.load_report("$PROFILE_RUN_DIR/reports/v2.ncu-rep")
-a1 = r1.range_by_idx(0).action_by_idx(0)
-a2 = r2.range_by_idx(0).action_by_idx(0)
-t1 = a1["gpu__time_duration.sum"].value()
-t2 = a2["gpu__time_duration.sum"].value()
-print(f"Speedup: {t1/t2:.2f}x")
+```bash
+python3 analyze_reports.py --run-dir "$PROFILE_RUN_DIR" \
+    --report "$PROFILE_RUN_DIR/reports/v1.ncu-rep" --tag v1 \
+    --report "$PROFILE_RUN_DIR/reports/v2.ncu-rep" --tag v2
 ```
+
+Each report is read in its own fresh process (the capture child is the only
+importer of `ncu_report`), and **every** range/action is archived — the tool
+never collapses a multi-launch report to its first action. Tags must be unique
+or the tool refuses, so no report is silently overwritten.
+
+> **Do NOT compute a speedup from `gpu__time_duration.sum`.** NCU runs the kernel
+> under instrumented cold replay to collect metrics; that duration is a
+> diagnostic artifact, not wall-clock performance, and a ratio of two such
+> durations is not a speedup. Measure performance separately with real event
+> timing under a declared regime — e.g. the Thor probe's `--mode timing`, which
+> uses CUDA events over repeated launches — and keep that claim distinct from any
+> profiled metric.
 
 ---
 
@@ -197,7 +221,9 @@ ncu -k "regex:my_kernel" -s 5 -c 3 -o report ./harness
 
 ---
 
-## GPU frequency locking (for reproducibility)
+## B200 GPU frequency locking (for reproducibility)
+
+The following B200 guidance does not apply to Thor. NVIDIA's [clock-control documentation](https://docs.nvidia.com/nsight-compute/ProfilingGuide/index.html#clock-control) lists Thor on Linux aarch64 sbsa as unsupported for NCU clock control. Do not infer Thor clock-control behavior from B200.
 
 ```bash
 # Check current clocks

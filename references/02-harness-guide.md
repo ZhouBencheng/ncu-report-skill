@@ -40,14 +40,24 @@ A complete reusable template lives at [`../assets/harness_template.cu`](../asset
 4. **Fill in `alloc_and_fill()`** to allocate/initialize inputs correctly for your kernel.
 5. **Fill in `launch_kernel()`** to do the actual kernel launch with the right arguments.
 
-Compile with:
+Compile with — pick the branch for your target:
 ```bash
+# Thor (SM110) baseline target:
+nvcc -O2 -std=c++17 -lineinfo \
+     -gencode=arch=compute_110,code=sm_110 \
+     harness.cu -o harness
+
+# B200 target (unchanged):
 nvcc -O2 -std=c++17 -lineinfo \
      -gencode=arch=compute_100,code=sm_100 \
      harness.cu -o harness
 ```
 
-Replace `compute_100,code=sm_100` with your target SM version (check `nvidia-smi --query-gpu=compute_cap --format=csv`).
+Select the target for the device you are profiling (check runtime CC with
+`nvidia-smi --query-gpu=compute_cap --format=csv`, which reports `11.0` on Thor).
+Runtime CC alone selects only the *baseline* target (`sm_110`); choose an
+`sm_110f`/`sm_110a` family/architecture target only from the instruction or
+compiler evidence that requires it, never from CC alone.
 
 ---
 

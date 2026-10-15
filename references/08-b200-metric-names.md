@@ -155,7 +155,7 @@ smsp__average_warps_issue_stalled_drain_per_issue_active.ratio
 smsp__average_warps_issue_stalled_no_instruction_per_issue_active.ratio
 smsp__average_warps_issue_stalled_sleeping_per_issue_active.ratio
 smsp__average_warps_issue_stalled_misc_per_issue_active.ratio
-smsp__average_warps_issue_stalled_selected_per_issue_active.ratio       # productive (= 1.0)
+smsp__average_warps_issue_stalled_selected_per_issue_active.ratio       # selected to issue (not a stall); preserve the reported per-issue-active ratio
 ```
 
 ### Stall reasons — per-PC (requires `--set source --section SourceCounters`)
@@ -198,7 +198,7 @@ pmsampling:smsp__warps_issue_stalled_barrier.avg
 pmsampling:smsp__warps_issue_stalled_tex_throttle.avg
 ```
 
-Note: some `pmsampling:` metrics (notably `pmsampling:sm__throughput.*` and `pmsampling:dram__throughput.*`) may return empty instance arrays depending on ncu version / driver / GPU pair — always check `m.num_instances() > 0` before using. When SM/DRAM timelines are empty, the stall-reason timelines (`pmsampling:smsp__warps_issue_stalled_*`) usually tell the same story and are more reliably populated.
+Note: some `pmsampling:` metrics (notably `pmsampling:sm__throughput.*` and `pmsampling:dram__throughput.*`) may return empty instance arrays depending on ncu version / driver / GPU pair — always check `m.num_instances() > 0` before using. An empty SM/DRAM timeline is an **absent measurement, not zero traffic**, and the stall-reason timelines (`pmsampling:smsp__warps_issue_stalled_*`) are **not a substitute** for it: they answer a different question (which stall reasons dominate over time), not what SM/DRAM utilization was. Report the SM/DRAM series as unavailable rather than reading throughput or utilization off the stall-reason curves.
 
 ---
 

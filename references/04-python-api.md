@@ -2,54 +2,114 @@
 
 Use the Python module, not CLI output, for anything beyond a quick look. The API lets you extract, aggregate, compare, and archive metric data cleanly.
 
+> **Jetson AGX Orin (sm_87):** read Orin reports with the aarch64 `ncu-report==2026.3.1` wheel (a reader distinct from the on-device NCU 2025.2.1 collector) and the `--profile orin` curated view. The exact reader invocation, `NCU_REPORT_PYTHONPATH` bridging, and fail-loud behaviour are in [`10-orin-collector-reader.md`](10-orin-collector-reader.md).
+
 Module path (adjust for your CUDA version):
 ```bash
-export PYTHONPATH=$PYTHONPATH:/usr/local/cuda-13.2/nsight-compute-2026.1.0/extras/python
+export PYTHONPATH=$PYTHONPATH:/opt/nvidia/nsight-compute/2026.1.1/extras/python
 python3 -c "import ncu_report; print('OK')"
+```
+
+Standalone NCU installations can instead use `/opt/nvidia/nsight-compute/<version>/extras/python`; the helpers probe this layout alongside the existing CUDA paths. The inspected NCU 2026.1.1.0 module was importable at the following path (verify the tool version with `ncu --version`, not its directory name):
+
+```bash
+PYTHONPATH=/opt/nvidia/nsight-compute/2026.1.1/extras/python${PYTHONPATH:+:$PYTHONPATH} \
+    python3 -c 'import ncu_report; print(ncu_report.__file__)'
 ```
 
 ---
 
 ## Basic loading
 
+For analysis, load through the detached capture (`ncu_utils`): each report is read
+once in a fresh child process — the only importer of `ncu_report` — and every
+range/action is enumerated. `select_actions` returns plain dicts, so the parent
+holds no native handle and an auxiliary launch is never dropped.
+
+```python
+import ncu_utils as u
+
+capture = u.load_capture("path/to/full_<tag>.ncu-rep")  # one fresh child per report
+for act in u.select_actions(capture):                   # ALL actions, not index 0
+    print(u.action_name(act), "-", len(act.get("metrics") or {}), "metrics")
+
+# Select one action explicitly; an unknown/ambiguous selector raises rather than
+# silently returning action 0.
+only = u.select_actions(capture, "r0a1")[0]
+```
+
+Under the hood the capture child wraps the native primitives below; reach for them
+only when extending the capture itself. A report can contain multiple "ranges"
+(each range = one profiled region); with `-c 1` you have one range containing one
+action. Never take `action_by_idx(0)` as *the* action — that drops every auxiliary
+launch in a multi-action report.
+
 ```python
 import sys
-sys.path.insert(0, "/usr/local/cuda-13.2/nsight-compute-2026.1.0/extras/python")
+sys.path.insert(0, "/opt/nvidia/nsight-compute/2026.1.1/extras/python")
 import ncu_report
 
 report = ncu_report.load_report("path/to/full_<tag>.ncu-rep")
-
-# A report can contain multiple "ranges" (each range = one profiled region).
-# In practice, with -c 1 you have exactly one range containing one action (= one kernel launch).
 rng = report.range_by_idx(0)
-action = rng.action_by_idx(0)
+action = rng.action_by_idx(0)   # ONE action; iterate range_by_idx/action_by_idx for all
 
 print(f"Kernel demangled name: {action.name()}")       # void my_kernel<8, 256>(...)
 print(f"Total metrics collected: {len(action.metric_names())}")
 ```
 
+The native-API sections that follow operate on a native `action`/`metric` handle
+like this (what the capture child wraps), distinct from the plain-dict `action`
+that `select_actions` returns for analysis.
+
 ---
 
 ## Reading a single metric
 
+Do **not** reach into the native `ncu_report` objects directly, and do **not**
+collapse a read error into a default with a bare `try/except`. Load a detached
+capture once (fresh child process) and read through `ncu_utils`, which keeps the
+five value states — `absent`, `read-error`, `nan`, `+inf`/`-inf`, `true-zero`,
+and an ordinary `value` — distinguishable.
+
 ```python
-def safe(action, name, default=None):
-    """Return metric value, or default if missing / errors."""
-    try:
-        return action[name].value()
-    except Exception:
-        return default
+import ncu_utils as u
 
-sm_util = safe(action, "sm__throughput.avg.pct_of_peak_sustained_elapsed")
-dram_read_bw = safe(action, "dram__bytes_read.sum.per_second")
-duration_ns = safe(action, "gpu__time_duration.sum")     # usually in ns
+capture = u.load_capture("profile.ncu-rep")   # one fresh child per report
+# "A single metric" still means ONE explicitly chosen action — not a silent [0].
+# Pass an explicit selector; iterate u.select_actions(capture) to see them all.
+action = u.select_actions(capture, "r0a0")[0]
 
-print(f"SM throughput: {sm_util}%")
-print(f"DRAM read BW:  {dram_read_bw/1e9:.2f} GB/s")
-print(f"Duration:      {duration_ns/1e3:.2f} µs")
+# classify_value takes the detached VALUE (what metric_value returns), NOT the
+# whole record. metric_value returns a number for 'value'/'true-zero', None when
+# absent, and an explicit sentinel dict for read-error / NaN / ±inf — never a
+# silent default. classify_value names which state the value is in.
+for name in ["sm__throughput.avg.pct_of_peak_sustained_elapsed",
+             "dram__bytes_read.sum.per_second",
+             "gpu__time_duration.sum"]:
+    state = u.classify_value(u.metric_value(action, name))
+    print(f"{name}: {u.metric_display(action, name)}  ({state})")
 ```
 
-**Always wrap in a try/except or helper.** Metric names differ between GPU generations — see [`08-b200-metric-names.md`](08-b200-metric-names.md). A metric that exists on A100 may return `KeyError` on B200.
+**Never substitute a default for a failed or absent read, and gate arithmetic on
+availability as well as a numeric state.** `metric_display` already combines both
+axes: it returns the number only when the scalar is present, readable, *available*
+(`has_value`), and numeric — otherwise `<absent>`, `<read-error>`, `<unavailable>`,
+or `<nan>`/`<+inf>`. A true-zero whose `has_value` is false must not be divided as
+if it were a measurement, so guard on the rendered value's type:
+
+```python
+bw = u.metric_display(action, "dram__bytes_read.sum.per_second")
+if isinstance(bw, (int, float)):          # numeric AND available
+    print(f"DRAM read BW: {bw/1e9:.2f} GB/s")
+else:
+    print(f"DRAM read BW: {bw} (not a measured value)")
+```
+
+Metric names differ between GPU generations — see
+[`08-b200-metric-names.md`](08-b200-metric-names.md). In the inspected Thor
+reports, curated metrics such as `dram__bytes_read.sum` and
+`dram__bytes_read.sum.per_second` were **absent**; the capture records them as
+`absent`, not as `0`. The B200 curated list remains unchanged.
 
 ---
 
@@ -62,7 +122,10 @@ all_names = action.metric_names()
 # Filter by pattern
 for name in sorted(all_names):
     if "warps_issue_stalled" in name and "ratio" in name:
-        print(name, "=", safe(action, name))
+        try:
+            print(name, "=", action[name].value())
+        except Exception as e:
+            print(name, "= <error>", e)   # report the failure; never a silent default
 ```
 
 This is how you discover the *actual* metric names available on your GPU instead of guessing.
@@ -92,11 +155,23 @@ for i in range(n):
 
 For PM sampling this is the timeline — index `i` is a time-ordered sample. Bucket these for an ASCII plot (see [`../scripts/plot_timeline.py`](../scripts/plot_timeline.py)).
 
+The inspected Thor `sm_110` and `sm_110a` reports each contained 15 PM metrics with 252–541 samples per metric and no unreadable samples. None of the ten default plotter metrics appeared, so their `no instances` output describes those requested metrics, not PM sampling as a whole. Select an exact name from `action.metric_names()` using the existing CLI:
+
+```bash
+python3 scripts/plot_timeline.py --run-dir "$PROFILE_RUN_DIR" \
+    --report "$PROFILE_RUN_DIR/reports/full_<tag>.ncu-rep" --tag '<tag>' \
+    --metric pmsampling:sm__inst_executed_pipe_alu_realtime.avg.pct_of_peak_sustained_elapsed \
+    --metric pmsampling:sm__pipe_tensor_cycles_active_realtime.avg.pct_of_peak_sustained_elapsed \
+    --cols 600
+```
+
+For these reports, `--cols 600` avoids bucket reduction of the active samples; the plotter trims leading and trailing measured zeros. The tensor metric's samples were all measured zero for this harness. This does not establish tensor-instruction support or activity in other workloads. Missing or unreadable samples must not be interpreted as zero; the inspected PM series did not exercise that case. For other reports, use `--cols` no smaller than the largest selected series' instance count; the compressed path can omit trailing remainder samples and is outside this validation.
+
 ---
 
 ## Per-PC → per-source-line mapping
 
-The source-level report (collected with `--set source --section SourceCounters`) has per-PC samples. Map them to source lines via `action.source_info(pc)`:
+For a report containing per-PC samples collected with `--section SourceCounters` (and `--set source` only where listed), map them to source lines via `action.source_info(pc)`. Check correlation data in the report; section availability alone is insufficient:
 
 ```python
 def per_pc_stalls(action, stall_metric):
@@ -199,23 +274,36 @@ This is how I built [`08-b200-metric-names.md`](08-b200-metric-names.md) — by 
 
 ## Comparing two reports programmatically
 
-```python
-def compare(rep1_path, rep2_path, metrics):
-    r1 = ncu_report.load_report(rep1_path)
-    r2 = ncu_report.load_report(rep2_path)
-    a1 = r1.range_by_idx(0).action_by_idx(0)
-    a2 = r2.range_by_idx(0).action_by_idx(0)
-    print(f"{'Metric':<75} {'v1':>15} {'v2':>15} {'change':>10}")
-    for m in metrics:
-        v1 = safe(a1, m)
-        v2 = safe(a2, m)
-        if isinstance(v1, (int, float)) and isinstance(v2, (int, float)) and v1:
-            chg = (v2 - v1) / v1 * 100
-            print(f"{m:<75} {v1:>15.4g} {v2:>15.4g} {chg:>+9.1f}%")
-        else:
-            print(f"{m:<75} {str(v1):>15} {str(v2):>15}")
+Load each report in its **own** fresh capture (never two live reports in one
+process), enumerate actions, and render with `metric_display` so an absent /
+read-errored / unavailable metric stays distinct from a measured value — and a
+true-zero baseline is never dropped from the comparison. This mirrors what
+[`../scripts/analyze_reports.py`](../scripts/analyze_reports.py) already does.
 
-compare("v1.ncu-rep", "v2.ncu-rep", [
+```python
+import ncu_utils as u
+
+def compare(report_paths_by_tag, metrics, selector=None):
+    # One fresh child per report; the parent keeps only the detached dicts.
+    # Enumerate EVERY action (keyed by tag + action label) so an auxiliary launch
+    # is never silently dropped. Pass an explicit `selector` (e.g. "r0a1") only to
+    # deliberately narrow to one action — a bare [0] would discard the rest.
+    columns = []   # (column_label, action)
+    for tag, path in report_paths_by_tag.items():
+        capture = u.load_capture(path)
+        for action in u.select_actions(capture, selector):
+            columns.append((f"{tag}/{u.action_label(action)}", action))
+    print(f"{'Metric':<75}" + "".join(f"{c:>20}" for c, _ in columns))
+    for m in metrics:
+        row = f"{m:<75}"
+        for _, action in columns:
+            # number, <absent>, <read-error>, <unavailable>, or nan/+inf — distinct
+            v = u.metric_display(action, m)
+            v = f"{v:.4g}" if isinstance(v, (int, float)) else str(v)
+            row += f"{v:>20}"
+        print(row)
+
+compare({"v1": "v1.ncu-rep", "v2": "v2.ncu-rep"}, [
     "gpu__time_duration.sum",
     "sm__throughput.avg.pct_of_peak_sustained_elapsed",
     "dram__bytes_read.sum.pct_of_peak_sustained_elapsed",
@@ -223,6 +311,13 @@ compare("v1.ncu-rep", "v2.ncu-rep", [
     "l1tex__t_sector_hit_rate.pct",
 ])
 ```
+
+A percent-change column is only meaningful between two *numeric, available*
+readings. Guard both sides with `isinstance(u.metric_display(a, m), (int, float))`
+(which checks numeric state **and** `has_value` availability) before dividing;
+an unavailable raw zero is not a measurement. A true-zero baseline makes the ratio
+undefined (not skippable) — report it as such rather than hiding the row, and
+never collapse an absent reading into `0`.
 
 ---
 
@@ -246,30 +341,27 @@ Sort by `estimated_speedup_pct` descending to get the highest-impact suggestions
 
 ## Saving everything for later
 
-Always archive the full metric dump:
+The CLIs already write the **lossless** archive for you: `analyze_reports.py` emits
+`analysis/metrics_all_<slug>.json` — one entry per metric carrying the typed value,
+unit, value-kind, per-instance values/kinds, correlation IDs/units, the scalar
+`has_value`, and any per-read error, with explicit sentinels for
+absent / read-error / NaN / ±inf / true-zero. Re-analysis reads that JSON instead
+of reopening the `.ncu-rep`:
 
 ```python
 import json
 from pathlib import Path
 
-def dump_all(action, outpath):
-    rows = []
-    for name in sorted(action.metric_names()):
-        try:
-            m = action[name]
-            rows.append({
-                "name": name,
-                "value": m.value(),
-                "unit": m.unit() if hasattr(m, "unit") else "",
-            })
-        except Exception as e:
-            rows.append({"name": name, "error": str(e)})
-    Path(outpath).write_text(json.dumps(rows, indent=1, default=str))
-
-dump_all(action, "analysis/metrics_all_<tag>.json")
+metrics = json.loads(Path("analysis/metrics_all_<slug>.json").read_text())
+rec = metrics["gpu__time_duration.sum"]
+print(rec["value"], rec.get("unit"), rec.get("has_value"))
 ```
 
-This makes future re-analysis cheap: the raw data lives as JSON, you don't need to reopen the `.ncu-rep`.
+Do **not** hand-roll a scalar-only dump (`{name, value, unit}` from `m.value()`):
+it discards instances, IDs, correlation IDs/units, value-kind, `has_value`, and
+read errors, and a naive `json.dump` of a NaN/±inf value is not even valid JSON.
+The capture child writes the record under `json.dump(..., allow_nan=False)` with
+the sentinels intact — archive *that*, never a lossy re-derivation.
 
 ---
 

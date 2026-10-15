@@ -16,7 +16,9 @@ cd profile/<run_name>/harness/
 cp /path/to/skills/ncu-report-skill/assets/harness_template.cu my_kernel_harness.cu
 cp /path/to/skills/ncu-report-skill/assets/safetensors_loader.h .
 # edit my_kernel_harness.cu to include your kernel + fill in main()
-nvcc -O2 -std=c++17 -lineinfo -gencode=arch=compute_100,code=sm_100 \
+# Thor (SM110): -gencode=arch=compute_110,code=sm_110
+# B200  (unchanged): -gencode=arch=compute_100,code=sm_100
+nvcc -O2 -std=c++17 -lineinfo -gencode=arch=compute_110,code=sm_110 \
      my_kernel_harness.cu -o my_kernel_harness
 ```
 
@@ -62,5 +64,5 @@ All three scripts take `--run-dir` and write under `<run-dir>/analysis/`.
 `ncu_utils.py` tries to auto-locate `ncu_report` from common CUDA install paths. If that fails, set `PYTHONPATH`:
 
 ```bash
-export PYTHONPATH=$PYTHONPATH:/usr/local/cuda-13.2/nsight-compute-2026.1.0/extras/python
+export PYTHONPATH=$PYTHONPATH:/opt/nvidia/nsight-compute/2026.1.1/extras/python
 ```

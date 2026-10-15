@@ -1,13 +1,17 @@
 ---
 name: ncu-report-skill
-description: Profile CUDA kernels with Nsight Compute on B200 / sm_100. Use when the user asks to profile a kernel, analyze its performance, diagnose bottlenecks, read an ncu report, or write an optimization plan — including variants in Chinese ("profile 一下", "为什么慢", "ncu 报告").
+description: Profile CUDA kernels with Nsight Compute on NVIDIA Thor (sm_110), B200 (sm_100), and Jetson AGX Orin (sm_87, CC 8.7). Use when the user asks to profile a kernel, analyze its performance, diagnose bottlenecks, read an ncu report, or write an optimization plan — including variants in Chinese ("profile 一下", "为什么慢", "ncu 报告").
 ---
 
-# Skill: CUDA Kernel Profiling (B200 / Nsight Compute)
+# Skill: CUDA Kernel Profiling (Thor / B200 / Orin / Nsight Compute)
 
 **When to use:** user asks to profile a CUDA kernel, analyze its performance, find its bottlenecks, or write an optimization plan based on Nsight Compute data. Triggers include: "profile X", "为什么这个 kernel 慢", "ncu report 说...", "下一步怎么优化", "帮我看一下这份 ncu 报告".
 
-**Target hardware (this repo):** NVIDIA B200 (sm_100, CC 10.0, 148 SMs, 192 GB HBM3e). Most advice below is generic; B200-specific notes are explicitly marked.
+**Target hardware (this repo):** NVIDIA **Thor (sm_110, CC 11.0)**, **B200 (sm_100, CC 10.0)**, and **Jetson AGX Orin (sm_87, CC 8.7)**. The resource facts *148 SMs, 192 GB HBM3e* are **B200-specific** — do not assume them for Thor or Orin. Most advice below is generic; B200-specific notes are explicitly marked. On any target, record the actual device resource facts and distinguish runtime compute capability from the compiled target. For other GPUs, verify available metrics and hardware-specific assumptions.
+
+**Orin (sm_87) entry point:** on Jetson AGX Orin the collector and the report reader are **two separate tools with separate versions** (collector NCU 2025.2.1 on-device; reader aarch64 `ncu-report==2026.3.1`). Start from [`references/10-orin-collector-reader.md`](references/10-orin-collector-reader.md) for the tested pairing, the runnable collect/read recipes, and the `--profile orin` curated view; the analyzer auto-selects the Orin profile only on a qualified `Orin`/CC 8.7 identity (else `generic`, never B200). The device identity, supported/unsupported instruction scope, and bounded execution evidence live in the companion KernelWiki pages `KernelWiki/wiki/hardware/orin.md` (`hw-orin`) and `KernelWiki/wiki/hardware/ampere-mma-async-copy.md` (`hw-ampere-mma-async-copy`).
+
+**Thor (SM110) preflight — before building/collecting:** record the selected `nvcc` / `ptxas` / `ncu` paths and versions, the *actual* device resource facts (SM count, resident warps/threads, shared-memory and L2 limits, SKU memory — never copied from B200), and keep runtime **CC 11.0** distinct from the compiled native/virtual target. Reuse the version/set/section preflight in [`references/03-collection.md`](references/03-collection.md) and the companion KernelWiki Thor page (`KernelWiki/wiki/hardware/thor.md`) and its evidence registry (`KernelWiki/data/thor-evidence.yaml`); select `sm_110f` or `sm_110a` only from instruction/compiler evidence, never from runtime CC alone. Retained B200 guidance stays labeled B200.
 
 ---
 
@@ -27,9 +31,9 @@ Most under-performing CUDA kernels are under-performing for exactly one reason t
 
 2. **Build a standalone harness** unless the user is profiling through their existing binary. Harnesses compile in seconds, run the kernel in isolation, and let you use `-lineinfo` cleanly so ncu can map SASS back to source. Compile into `profile/<run_name>/harness/`. See [`references/02-harness-guide.md`](references/02-harness-guide.md) and the template in [`assets/harness_template.cu`](assets/harness_template.cu).
 
-3. **Run two profiles**: `--set full` (with `PmSampling` sections) for the overview, and `--set source --section SourceCounters` for per-line stall attribution. Write outputs to `profile/<run_name>/reports/`. See [`references/03-collection.md`](references/03-collection.md).
+3. **Check available sets and sections, then collect profiles**: `--set full` (with available `PmSampling` sections) for the overview, and `--section SourceCounters` for per-line stall attribution. Add `--set source` only if `ncu --list-sets` lists it. Source and PM availability must be confirmed in the report; unavailable measurements are not zero. Write outputs to `profile/<run_name>/reports/`. See [`references/03-collection.md`](references/03-collection.md). **On Jetson AGX Orin (sm_87)** the collector/reader split and exact runnable recipes are in [`references/10-orin-collector-reader.md`](references/10-orin-collector-reader.md).
 
-4. **Parse with `ncu_report`** Python module — not by eye-balling the CLI. Write analysis outputs to `profile/<run_name>/analysis/`. Use the scripts in [`scripts/`](scripts/). See [`references/04-python-api.md`](references/04-python-api.md).
+4. **Parse with `ncu_report`** Python module — not by eye-balling the CLI. Write analysis outputs to `profile/<run_name>/analysis/`. Use the scripts in [`scripts/`](scripts/). See [`references/04-python-api.md`](references/04-python-api.md). For Orin reports, read with the aarch64 `ncu-report==2026.3.1` reader and the `--profile orin` curated view per [`references/10-orin-collector-reader.md`](references/10-orin-collector-reader.md).
 
 5. **Work through the six analysis dimensions.** See [`references/05-analysis-dimensions.md`](references/05-analysis-dimensions.md). Every one matters, but on any given kernel only 1–2 will dominate.
 
@@ -56,6 +60,7 @@ Most under-performing CUDA kernels are under-performing for exactly one reason t
 | [`references/08-b200-metric-names.md`](references/08-b200-metric-names.md) | sm_100 metric names vs older GPUs — many common names are different |
 | [`references/09-common-issues.md`](references/09-common-issues.md) | Permissions, PM sampling gaps, TVM-FFI / PyTorch gotchas |
 | [`references/tool-usage.md`](references/tool-usage.md) | How to run scripts and copy harness assets |
+| [`references/10-orin-collector-reader.md`](references/10-orin-collector-reader.md) | **Jetson AGX Orin (sm_87).** Collector/reader version split (collector NCU 2025.2.1; reader aarch64 `ncu-report==2026.3.1`), runnable collect/read recipes, and the `--profile orin` curated view |
 | [`references/blackwell-cuda-programming.md`](references/blackwell-cuda-programming.md) | Blackwell-specific programming principles and checklists |
 
 ### Scripts (executable tools and shared module)

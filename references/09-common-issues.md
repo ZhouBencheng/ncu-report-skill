@@ -67,7 +67,7 @@ For JIT / framework-integrated builds:
 1. **You didn't request it.** Add `--section PmSampling --section PmSampling_WarpStates` to the ncu invocation.
 2. **vGPU / MIG environment.** PM sampling isn't supported under virtualization. Use metric-based (non-timeline) analysis only.
 3. **Kernel too short.** Kernels under ~20 µs produce few PM samples; what comes back is dominated by warmup noise.
-4. **Specific PM metric just isn't available on your GPU / driver / ncu combination.** Some `pmsampling:sm__throughput.*` or `pmsampling:dram__throughput.*` variants may return empty instance arrays even when other `pmsampling:smsp__warps_issue_stalled_*` series work fine on the same report. Always check `m.num_instances() > 0`; if the SM/DRAM timeline is empty, the stall-reason timelines are a reliable proxy.
+4. **Specific PM metric just isn't available on your GPU / driver / ncu combination.** Some `pmsampling:sm__throughput.*` or `pmsampling:dram__throughput.*` variants may return empty instance arrays even when other `pmsampling:smsp__warps_issue_stalled_*` series work fine on the same report. Always check `m.num_instances() > 0`. An empty SM/DRAM timeline is an **absent measurement, not zero traffic** — it is *not* a reliable stall proxy and does not substitute for the SM/DRAM signal. The stall-reason timelines answer a different question (which stall reasons dominate over time); report the SM/DRAM series as unavailable rather than inferring throughput or a stall conclusion from its absence.
 
 ---
 
@@ -107,8 +107,8 @@ def safe(action, name, default=None):
 
 ```bash
 find /usr/local/cuda* -name "ncu_report*" -type f 2>/dev/null
-# e.g. /usr/local/cuda-13.2/nsight-compute-2026.1.0/extras/python/ncu_report.py
-export PYTHONPATH=$PYTHONPATH:/usr/local/cuda-13.2/nsight-compute-2026.1.0/extras/python
+# e.g. /opt/nvidia/nsight-compute/2026.1.1/extras/python/ncu_report.py
+export PYTHONPATH=$PYTHONPATH:/opt/nvidia/nsight-compute/2026.1.1/extras/python
 python3 -c "import ncu_report; print('OK')"
 ```
 
@@ -173,6 +173,83 @@ ncu handles CUDA Graph launches fine — each captured kernel shows up as a sepa
 ---
 
 ## Output interpretation
+
+### Thor: an occupancy-labelled counter exceeds 100%
+
+In the 2026-10-13 original-FP32 ActiveVLN gate/SiLU/multiply experiment, the
+40-register native kernel reported
+`sm__warps_active.avg.pct_of_peak_sustained_active=110.96731945718507%`.
+Keep the original typed value, unit and report identity, flag the anomaly, and
+exclude it from physical achieved-occupancy conclusions. Do not clamp to 100 or
+guess a denominator, clock or replay cause. This is not a blanket rule that all
+`pct_of_peak` metrics above 100 are invalid; their definitions differ.
+
+The same kernel's long-scoreboard count was **96.3366% of 6,988 ordinary PC
+samples**, not 96.3366% of elapsed time. Its mapped FFMA locations are consumers,
+not proof of a unique load producer. DRAM read/write/throughput metrics were
+unavailable across both reports: preserve missingness, never fill it with zero
+or conclude bandwidth saturation from those absent measurements.
+
+The complete FFN used five kernels before and three after. Sixteen consecutive
+eager calls with the same weights showed **1.64% lower per-call latency**
+(B/C 1.01664065, interval [1.01354657, 1.02029359]); this did not predict a stable
+gain in the actual 36-layer model. The separate initial-request E2E primary
+ratio was 1.00028814, interval [0.99515433, 1.00389403], with one slower process
+pair. That predefined gate failed and the candidate was not integrated. Keep
+ordinary timings separate from NCU replay duration, and keep same-weight
+microbenchmarks separate from full-model evidence. These intervals describe the
+fixed experiments, not a population or general navigation-workload guarantee.
+
+A later guard-only revision kept the same native kernel bytes and reduced
+eligibility-check CPU cost (B/C 1.6948), but its separate full-model E2E primary
+ratio was 1.00027059, interval [0.99740037, 1.00300278]. Both process-pair point
+estimates were positive; the predefined interval gate still failed. The bounded
+experiment ended without integration or further samples selected by the result.
+Neither fewer kernels nor faster CPU guards establish an end-to-end benefit.
+
+Evidence is external to the skill: campaign root
+`/home/cilab/zbc/embodiinfer-operators/profile/embodiinfer-thor-sm110-loop-20261013`
+(local mirror `/Users/zbc/workspace/kda/profile/embodiinfer-thor-sm110-loop-20261013`).
+Verify the following relative paths and SHA256 values before reusing the claims;
+unavailable receipts remain unavailable evidence:
+
+- `analysis/active-gate-v2-performance-independent-review.md`:
+  `fa9365aed499f3ab56bba1ed9d764ebea289537c23cedcb19f15d38be7c239d5`.
+- `analysis/active-gate-v2-ncu-independent-evidence.json`:
+  `1003cc3592ca5ea8f10a85f506b3d85149d11f7ee9ec88ee6949d1d848530231`.
+- `analysis/active-gate-v2-e2e-actual-independent-review.md`:
+  `16ea820b4f560f186f61bacfdee2e0f37c7a4eb26d9f7ffdfffba6ac2b84cdb2`.
+- `analysis/active-gate-v2-e2e-actual-independent-evidence.json`:
+  `89dd19b26416af81b66d6d7988b2d8e45388fe4007298a23644b2f5f7f8bfa61`.
+- `analysis/active-gate-v3-guard-actual-independent-evidence.json`:
+  `0a2d48271115bed2affa8fc0a260329c82b7086c3313298998579e62efde3f63`.
+- `analysis/active-gate-v3-e2e-actual-independent-evidence.json`:
+  `6361dc4a1ca615e583b26a17beb15173b234bbe49b85edec295698da76a339ed`.
+
+### Orin: a half-opcode spelling is not a precision diagnosis
+
+In one native SM87 ActiveVLN down-projection artifact, `HFMA2.MMA` at SASS
+addresses `0x180` and `0x520` constructs constants from RZ/immediates; neither
+instruction consumes model data. The loaded FP32 inputs instead flow through
+FFMA chains and FADD/SHFL/shared-memory reduction, consistent with the retained
+PTX `fma.rn.f32` / `add.rn.f32` data path. Determine precision by following the
+actual input-to-output register definitions and uses in the exact compiled
+artifact, not by counting an opcode name or treating this example as a whitelist.
+
+This was a source/binary review only: it permitted the fixed correctness test,
+and did not establish numerical correctness, speedup, NCU mechanism, model
+equivalence, integration or BF16 qualification. Evidence is external under
+`/Users/zbc/workspace/kda/profile/orin-m1-ffn-20261014`:
+
+- `analysis/candidate-active-down-v1-independent-review.md`:
+  `df99b81b173c939445566ccf86c326683e6d1c778a974143bfb7b4bb086a242c`.
+- `analysis/candidate-active-down-v1-independent-review.json`:
+  `cd03e021c8c9d20eb6358e016a6b3ffb35be06807a051bd241f3ce0695c7ffa7`.
+
+The receipt binds manifest
+`ae7c4016280ea9da46f272265cf318e74915b6402a0cea1bd2c845fd35a62476`
+and library `5ce533f6f22f4d1f47b239c54e11fcc427b58dde2cb7189bca82ca9963d25f2b`.
+If those artifacts or receipts are unavailable, retain that evidence limitation.
 
 ### "`sm__throughput = X%`, is that good?"
 
