@@ -6,9 +6,9 @@
 // and customize the sections marked with TODO(you).
 //
 // Compile with:
-//     nvcc -O2 -std=c++17 -lineinfo -arch=sm_100a \
+//     nvcc -O2 -std=c++17 -lineinfo -arch="$CUDA_TARGET" \
 //          my_kernel_harness.cu -o my_kernel_harness
-//     (sm_100a: B200; sm_103a: B300 — the GPU's compute capability, see
+//     (choose the exact target required by your GPU/instructions, see
 //      ../reference/02-harness-guide.md)
 //
 // Usage modes this template supports:

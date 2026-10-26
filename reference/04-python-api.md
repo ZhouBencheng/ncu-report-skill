@@ -15,7 +15,7 @@ import ncu_utils                               # puts ncu_report on sys.path
 import ncu_report
 ```
 
-The API below is ncu 2026.3's (it reads 2026.1 reports too); `help(ncu_report.IAction)` documents your version.
+The advanced API examples below are scoped to NCU 2026.3; `help(ncu_report.IAction)` documents the selected reader. The tested 2024.1.1 reader lacks `rule_results()` and `timed_warp_samples()`. The helpers report these as unavailable and still read scalar/source data. Collector version is a separate fact: pass the recorded `--collector-version` once per report to the analyzer, or retain it as unknown. Never infer it from the reader.
 
 ---
 
@@ -48,16 +48,16 @@ def safe(action, name, default=None):
     except Exception:
         return default
 
-sm_util = safe(action, "sm__throughput.avg.pct_of_peak_sustained_elapsed")
-dram_read_bw = safe(action, "dram__bytes_read.sum.per_second")
-duration_ns = safe(action, "gpu__time_duration.sum")     # usually in ns
-
-print(f"SM throughput: {sm_util}%")
-print(f"DRAM read BW:  {dram_read_bw/1e9:.2f} GB/s")
-print(f"Duration:      {duration_ns/1e3:.2f} µs")
+for name in ("sm__throughput.avg.pct_of_peak_sustained_elapsed",
+             "dram__bytes_read.sum.per_second", "gpu__time_duration.sum"):
+    try:
+        metric = action[name]
+        print(name, "=", metric.value(), metric.unit())
+    except Exception:
+        print(name, "= unavailable")
 ```
 
-**Always wrap in a try/except or helper.** Metric names differ between GPU generations and ncu releases — see [`08-metric-names.md`](08-metric-names.md). A metric that exists on A100 may return `KeyError` on B200.
+Convert units only after checking the returned unit metadata. **Use `ncu_profiles.metric_evidence` for persisted analysis:** it distinguishes report absence, unavailable scalars and read errors, and preserves units. The short `safe` example above only returns a value-or-None; it cannot explain why a measurement is missing. Metric names differ between GPU generations and ncu releases — see [`08-metric-names.md`](08-metric-names.md). A metric that exists on A100 may return `KeyError` on B200.
 
 ---
 
@@ -73,7 +73,7 @@ for name in sorted(all_names):
         print(name, "=", safe(action, name))
 ```
 
-This is how you discover the *actual* metric names available on your GPU instead of guessing.
+This discovers the names present in this report. Use a target-machine collector query to discover supported-but-uncollected metrics.
 
 ---
 
@@ -113,7 +113,7 @@ The stall reasons over time are in `action.timed_warp_samples()`: one dict per s
 
 ## Per-PC → per-source-line mapping
 
-A report with the SourceCounters section (`--set full` has it) has per-PC samples. Map them to source lines via `action.source_info(pc)`:
+A report with the SourceCounters section (if available and collected) has per-PC samples. Map them to source lines via `action.source_info(pc)`:
 
 ```python
 def per_pc_stalls(action, stall_metric):

@@ -1,0 +1,18 @@
+{
+  "target": "sm110",
+  "compute_capability": "11.0",
+  "aliases": [
+    "thor",
+    "agx-thor",
+    "jetson agx thor",
+    "jetson thor",
+    "nvidia thor"
+  ],
+  "name_patterns": [
+    "thor",
+    "jetson t5000",
+    "jetson t4000"
+  ],
+  "metric_profile": "sm100",
+  "additional_metrics": "jetson-memory-metrics.json"
+}

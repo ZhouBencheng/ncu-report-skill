@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 import textwrap
 from pathlib import Path
@@ -33,13 +34,14 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 from ncu_utils import (  # noqa: E402
-    KEY_METRICS, action_tags, dump_all_metrics, kernel_name, rule_speedups, safe,
-    select_actions,
+    action_tags, dump_all_metrics, kernel_name, rule_speedups,
+    select_actions, select_target, metric_names, metric_evidence, ncu_report,
 )
 
 
-def collect(action, source: str, tag: str, analysis_dir: Path) -> dict:
+def collect(action, source: str, tag: str, analysis_dir: Path, target="auto", collector_version=None) -> dict:
     name = kernel_name(action)
+    selection = select_target(action, target)
     print(f"[{tag}] {source}: {len(action.metric_names())} metrics, kernel {kernel_name(action, 'function')}")
 
     # Full archive
@@ -47,8 +49,23 @@ def collect(action, source: str, tag: str, analysis_dir: Path) -> dict:
     print(f"  -> metrics_all_{tag}.json ({n} metrics)")
 
     # Curated key metrics
-    key = {m: safe(action, m) for m in KEY_METRICS}
+    records = metric_evidence(action, metric_names(selection["target"]))
+    key = {m: record["value"] for m, record in records.items()}
     key["__kernel_name__"] = name
+    key["__target__"] = selection
+    key["__metric_units__"] = {m: record["unit"] for m, record in records.items()}
+    key["__metric_status__"] = {m: record["status"] for m, record in records.items()}
+    reader_path = getattr(ncu_report, "__file__", None)
+    bundled_version = re.search(r"nsight-compute[/-](\d+\.\d+\.\d+)", reader_path or "")
+    module_version = getattr(ncu_report, "__version__", None)
+    reader_version = module_version or (bundled_version.group(1) if bundled_version else None)
+    reader_source = "module __version__" if module_version else "module path" if bundled_version else "unknown"
+    evidence = {"target": selection,
+                "collector": {"version": collector_version, "source": "collection-record argument" if collector_version else "unknown; not inferred from reader"},
+                "reader": {"module": reader_path, "version": reader_version, "source": reader_source},
+                "metrics": records}
+    (analysis_dir / f"metrics_evidence_{tag}.json").write_text(json.dumps(evidence, indent=2, default=str) + "\n")
+    print(f"  target={selection['target']} ({selection['status']}); unavailable fields retain explicit status")
 
     (analysis_dir / f"metrics_key_{tag}.json").write_text(
         json.dumps(key, indent=2, default=str)
@@ -58,7 +75,10 @@ def collect(action, source: str, tag: str, analysis_dir: Path) -> dict:
         for m, v in key.items():
             if m.startswith("__"):
                 continue
-            f.write(f"{m:95s} = {v}\n")
+            record = records[m]
+            shown = str(v) if record["status"] == "present" else f"<{record['status']}>"
+            unit = f" {record['unit']}" if record["unit"] else ""
+            f.write(f"{m:95s} = {shown}{unit}\n")
     print(f"  -> metrics_key_{tag}.{{json,txt}}")
 
     # NCU's rule engine
@@ -67,13 +87,15 @@ def collect(action, source: str, tag: str, analysis_dir: Path) -> dict:
         f.write(f"===== NCU rules for {tag}, highest estimated speedup first =====\n")
         f.write("Kernel: " + name + "\n")
         f.write("speedup: est. % of the kernel's time (global) or of the part the rule is about (local)\n")
-        for r in rules:
+        if rules is None:
+            f.write("\nUnavailable: this reader has no rule_results API; use the collector CLI details page.\n")
+        for r in rules or []:
             sp = f"{r['speedup']:6.2f}% ({r['speedup_type']})" if r["speedup"] is not None else "     -"
             f.write(f"\n[{r['severity']}] {sp}  {r['section']} / {r['rule']}"
                     + (f": {r['title']}" if r["title"] else "") + "\n")
             f.write(textwrap.fill(r["message"], 110, initial_indent="    ",
                                   subsequent_indent="    ") + "\n")
-    print(f"  -> rules_{tag}.txt ({len(rules)} results)")
+    print(f"  -> rules_{tag}.txt ({str(len(rules)) + ' results' if rules is not None else 'reader API unavailable'})")
     return key
 
 
@@ -91,12 +113,28 @@ def compare(collected: dict, analysis_dir: Path):
         for t in tags:
             f.write(f"{t:>{col_w}}")
         f.write("\n" + "-" * (95 + col_w * len(tags)) + "\n")
-        for m in KEY_METRICS:
-            if all(collected[t].get(m) is None for t in tags):
+        f.write("Raw same-name metrics; compare units, normalization, workload and device before interpreting differences.\n")
+        for m in dict.fromkeys(m for t in tags for m in collected[t] if not m.startswith("__")):
+            statuses = {t: collected[t].get("__metric_status__", {}).get(
+                m, "present" if collected[t].get(m) is not None else "not_selected") for t in tags}
+            if all(statuses[t] != "present" for t in tags) and len(set(statuses.values())) == 1:
                 continue  # collected for none of them (a survey report has only a few metrics)
+            present_tags = [t for t in tags if statuses[t] == "present"]
+            units = {t: collected[t].get("__metric_units__", {}).get(m)
+                     for t in present_tags}
+            known_units = {unit for unit in units.values() if unit is not None}
+            if len(known_units) > 1:
+                f.write(f"{m}: incompatible units {sorted(known_units)}; values not compared\n")
+                continue
+            missing_units = [t for t, unit in units.items() if unit is None]
+            if len(present_tags) > 1 and missing_units:
+                f.write(f"{m}: unit metadata unavailable for {', '.join(missing_units)}; "
+                        "values not compared\n")
+                continue
             f.write(f"{m:<95}")
             for t in tags:
-                v = collected[t].get(m, "N/A")
+                state = statuses[t]
+                v = collected[t].get(m, "N/A") if state == "present" else f"<{state}>"
                 if isinstance(v, (int, float)):
                     v = f"{v:.4g}"
                 f.write(f"{str(v):>{col_w}}")
@@ -114,6 +152,10 @@ def main():
                     help="Short tag for each report. Must be passed once per --report.")
     ap.add_argument("--kernel", type=str, default=None,
                     help="Regex on the kernel's function or demangled name: keep only matching kernels.")
+    ap.add_argument("--target", default="auto",
+                    help="Runtime SM/device alias; auto reads report identity, unknown uses generic. Conflicts fail.")
+    ap.add_argument("--collector-version", action="append",
+                    help="Recorded producer version, once per --report when supplied; never inferred from the reader")
     args = ap.parse_args()
 
     if len(args.report) != len(args.tag):
@@ -121,11 +163,14 @@ def main():
     if len(set(args.tag)) != len(args.tag):
         ap.error("each --tag must be different: outputs are named after it")
 
+    if args.collector_version and len(args.collector_version) != len(args.report):
+        ap.error("when supplied, --collector-version must be passed once per --report")
+
     analysis_dir = args.run_dir / "analysis"
     analysis_dir.mkdir(parents=True, exist_ok=True)
 
     collected = {}
-    for rep, tag in zip(args.report, args.tag):
+    for rep, tag, collector_version in zip(args.report, args.tag, args.collector_version or [None] * len(args.report)):
         if not rep.exists():
             print(f"[skip] {rep} does not exist", file=sys.stderr)
             continue
@@ -134,7 +179,10 @@ def main():
             print(f"[skip] {rep}: no kernel matches {args.kernel!r}", file=sys.stderr)
             continue
         for action, t in zip(acts, action_tags(tag, acts)):
-            collected[t] = collect(action, rep.name, t, analysis_dir)
+            try:
+                collected[t] = collect(action, rep.name, t, analysis_dir, args.target, collector_version)
+            except ValueError as error:
+                ap.error(str(error))
 
     compare(collected, analysis_dir)
 

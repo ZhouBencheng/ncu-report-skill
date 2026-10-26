@@ -5,7 +5,7 @@ Every kernel profile report is ambiguous until you look at it through specific l
 For each dimension this doc describes:
 
 - **What you're answering**
-- **Which metrics to read** (Blackwell names, ncu 2026.3)
+- **Which metrics to read** (raw-name candidates; availability is target/collector dependent)
 - **How to read them** (what's "normal", what's "bad")
 - **Which `helpers/` to run**
 
@@ -27,14 +27,14 @@ launch__occupancy_limit_blocks
 launch__occupancy_limit_registers
 launch__occupancy_limit_shared_mem
 launch__occupancy_limit_warps
-device__attribute_multiprocessor_count         (148 on B200)
+device__attribute_multiprocessor_count         (actual device resource)
 sm__maximum_warps_per_active_cycle_pct          (theoretical occupancy %)
 sm__warps_active.avg.pct_of_peak_sustained_active  (achieved occupancy %)
 ```
 
 **Reading:**
 
-- **Waves / SM < 1**: grid is too small to fill the chip. On B200 with 148 SMs, if `launch__grid_size < 148 × blocks_per_SM`, some SMs sit idle the entire time. `Est. Speedup` from NCU often hits 50-90% here.
+- **Waves / SM < 1**: grid is too small to fill the chip. If `launch__grid_size < actual_SM_count × resident_blocks_per_SM`, some SMs sit idle the entire time. `Est. Speedup` from NCU often hits 50-90% here.
 - **Waves / SM in [1, 2)**: you have a tail wave (partial last wave). Tail effect magnitude is roughly `(last_wave_blocks / wave_size) × (block_exec_time / total_kernel_time)`.
 - **Waves / SM > 4**: grid is plenty big, scheduling averages out.
 - **Theoretical occupancy 100% but achieved << 100%**: stalls are the bottleneck, not launch config. Move to Dimension 3.
@@ -111,7 +111,7 @@ Ratios > 5x indicate significant potential for tail effect. A lower ratio does n
 
 **Aggregate stall metrics (SOL-adjacent, aggregated over the kernel):**
 ```
-# Ratio per issued warp — how many of 16 active warps are in each stall state
+# Ratio per issued warp — how many resident warps are in each stall state
 smsp__average_warps_issue_stalled_long_scoreboard_per_issue_active.ratio
 smsp__average_warps_issue_stalled_short_scoreboard_per_issue_active.ratio
 smsp__average_warps_issue_stalled_wait_per_issue_active.ratio
@@ -152,7 +152,7 @@ smsp__pcsamp_warps_issue_stalled_selected                  # productive cycles
 | `drain` | warp finishing last few instructions | end of kernel | ignore |
 | `branch_resolving` | branch target calc in progress | tight branches | usually minor |
 
-**Reading the ratio metric:** a value of e.g. `smsp__average_warps_issue_stalled_long_scoreboard_per_issue_active.ratio = R` means: for every cycle in which a warp issues, R other warps (on that SM sub-partition, per cycle-with-an-issue) were stalled on `long_scoreboard`. Higher values = more stalled time. On a kernel with 16 active warps per scheduler, R is bounded above by ~15 (all other warps stalled on this reason).
+**Reading the ratio metric:** a value of e.g. `smsp__average_warps_issue_stalled_long_scoreboard_per_issue_active.ratio = R` means: for every cycle in which a warp issues, R other warps (on that SM sub-partition, per cycle-with-an-issue) were stalled on `long_scoreboard`. Higher values = more stalled time. Its bound depends on the selected target and the launch's resident warps; use the report's device and occupancy fields rather than assuming a fixed number per scheduler.
 
 **Reading the `pcsamp` percentages:** normalize by `smsp__pcsamp_sample_count` to get "% of samples stalled on X". Rules of thumb:
 
@@ -183,20 +183,17 @@ sm__pipe_tensor_subpipe_hmma_cycles_active.avg.pct_of_peak_sustained_elapsed  # 
 sm__pipe_tensor_subpipe_imma_cycles_active.avg.pct_of_peak_sustained_elapsed  # INT MMA
 sm__pipe_tensor_subpipe_dmma_cycles_active.avg.pct_of_peak_sustained_elapsed  # FP64 MMA (absent on B300)
 sm__ops_path_tensor_op_hmma_src_bf16_dst_fp32_sparsity_off.avg       # BF16×BF16→FP32 ops, warp-level mma (HMMA)
-sm__ops_path_tensor_op_utchmma_src_bf16_dst_fp32_sparsity_off.avg.pct_of_peak_sustained_elapsed  # the same for tcgen05 (UTC) MMA
-sm__mem_tensor_cycles_active.avg.pct_of_peak_sustained_elapsed        # TMEM busy (tcgen05 kernels)
-smsp__sass_inst_executed_op_utcmma.sum                                # tcgen05.mma instructions issued
 ```
 
 **Reading:**
 
-- **`sm__pipe_tensor_cycles_active = 0%`**: no tensor core usage at all. For matmul-ish kernels (attention, GEMM, conv), this is almost always a missed optimization.
-- **`... = X%` but X << 50%**: tensor cores are being used but underutilized. Usually means data isn't arriving fast enough (Dimension 6) or tile sizes are wrong.
-- **`... > 50%`** on B200: kernel is doing well on the Tensor-Core front. Focus elsewhere.
+- **A collected, applicable Tensor activity counter is zero**: inspect emitted instructions and dtype before concluding that the path does not use Tensor Cores. An absent counter is not this observation.
+- **Low measured Tensor activity relative to an attainable baseline**: check data arrival, available parallel work and tile shape. Small workloads may not amortize a different matrix path.
+- Compare achieved useful work with the target/dtype/shape's attainable throughput. There is no universal utilization cutoff.
 
-**Blackwell-specific note:** B200 uses 5th-gen tensor cores with `tcgen05.mma` + TMEM accumulators. Hand-rolled kernels need `tcgen05.alloc`, `tcgen05.mma`, `tcgen05.ld`, `tcgen05.dealloc` PTX. Most projects should use CUTLASS 4.x / cuBLAS instead of hand-rolling. See `../blackwell-cuda-programming.md` at the repo root.
+**Target-specific paths:** SM100/SM103 and applicable SM110 forms have additional UTC/TMEM observations; read the selected target guide. Their absence on SM87/SM89 is not zero Tensor Core utilization.
 
-**Fix direction:** if you see 0% and the workload is matrix-multiplication-shaped, redesign around MMA. This is usually a major refactor but gives 2-10× on compute-bound paths.
+**Fix direction:** when instructions and workload evidence support it, compare an appropriate MMA/library implementation. Verify numerical behavior and measure the result; no speedup is implied by a low activity counter alone.
 
 ---
 

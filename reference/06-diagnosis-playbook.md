@@ -1,6 +1,6 @@
 # Diagnosis Playbook — Pattern → Cause → Fix
 
-For each observed NCU signal, what does it typically mean, and what's the first fix to try? This synthesizes the Blackwell programming principles (the companion `blackwell-cuda-programming.md` at the repo root) with the profiling signals.
+For each observed NCU signal, what does it typically mean, and what's the first fix to try? The observation and validation steps are shared. Select concrete instructions and resource limits from the target architecture guide; source names below are candidates and may be absent in a report.
 
 Read this after you've gathered the metrics (via [`05-analysis-dimensions.md`](05-analysis-dimensions.md)) — here you translate metrics into diagnoses and fix directions.
 
@@ -24,7 +24,7 @@ Most kernels will match 2-4 patterns simultaneously. **Rank them by magnitude** 
 
 **Signals:**
 - `launch__waves_per_multiprocessor < 0.5`
-- `launch__grid_size < device__attribute_multiprocessor_count` (e.g., 64 blocks on a 148-SM B200 / B300)
+- `launch__grid_size < device__attribute_multiprocessor_count` (use the report's actual SM count)
 - NCU rule: *"The grid for this launch is configured to execute only N blocks, which is less than the M multiprocessors used."* with `Est. Speedup: 50-90%`
 
 **Why:** each CTA occupies at most one SM; with fewer CTAs than SMs, some SMs are completely idle throughout the kernel.
@@ -42,7 +42,6 @@ Most kernels will match 2-4 patterns simultaneously. **Rank them by magnitude** 
 - LLM decode (batch=1, query_len=1) is fundamentally small. Split-K over KV length is the standard mitigation.
 - Final reduction stages of a multi-level reduction are naturally small; fuse them into the producing kernel.
 
-**Cross-ref:** Blackwell principle 1 (the companion `blackwell-cuda-programming.md` at the repo root).
 
 ---
 
@@ -69,7 +68,6 @@ Most kernels will match 2-4 patterns simultaneously. **Rank them by magnitude** 
 - Short kernels (< 10 µs) where partial-wave cost is absolute-small.
 - Workloads where you already pre-sort / pre-pack.
 
-**Cross-ref:** Blackwell principle 11.
 
 ---
 
@@ -95,7 +93,6 @@ Most kernels will match 2-4 patterns simultaneously. **Rank them by magnitude** 
 - Gather/scatter by random index (sparse matmul, embedding lookup) — fundamentally uncoalesced. Sort the indices for locality if possible.
 - Graph / tree traversal.
 
-**Cross-ref:** Blackwell principles 2, 13.
 
 ---
 
@@ -135,7 +132,7 @@ If `K < 8`: consider batching multiple iterations' results into a vectorized wri
 **First-line fix:** increase in-flight memory requests:
 - **Unroll the load loop** so 4-8 loads are issued before any value is used. Compiler + hardware reorders.
 - **Add more independent warps** — raise occupancy (Pattern J).
-- **`cp.async` (Ampere+) / TMA (Hopper+) / tcgen05.cp (Blackwell)** for bulk async loads that don't block issue.
+- **A supported global-to-shared async copy path**, such as ordinary `cp.async` on SM87/SM89 or a target-supported TMA path. Choose from the target guide. `tcgen05.cp` is shared-to-TMEM and does not fetch global memory.
 
 **Deeper fixes:**
 - Software pipelining: while tile N is being computed, pre-load tile N+1 into shared memory.
@@ -144,7 +141,6 @@ If `K < 8`: consider batching multiple iterations' results into a vectorized wri
 **Exceptions:**
 - Pointer chasing / graph traversal — data dep chain is fundamental.
 
-**Cross-ref:** Blackwell principles 7, 15.
 
 ---
 
@@ -155,19 +151,18 @@ If `K < 8`: consider batching multiple iterations' results into a vectorized wri
 - `sm__pipe_tensor_cycles_active.avg.pct_of_peak_sustained_elapsed = 0%`.
 - Workload is matmul-ish (GEMM, attention, conv).
 
-**Why:** kernel uses scalar FMA via the ALU pipe instead of tensor cores. On B200, tensor cores can do 16× the FMA throughput of scalar pipes for BF16→FP32.
+**Why:** kernel uses scalar FMA via the ALU pipe instead of tensor cores. Compare the target's actual dtype-specific execution paths and useful work; a peak throughput ratio does not establish a kernel speedup.
 
-**First-line fix:** use `WMMA` (Ampere+) / `wgmma` (Hopper) / `tcgen05.mma` (Blackwell). If hand-rolling is too much, use CUTLASS 4.x or cuBLAS, which are already tuned for the target arch.
+**First-line fix:** select a matrix instruction or library path supported by the actual target, dtype and shape. SM87/SM89 warp MMA, SM90 WGMMA and SM100/SM110 tcgen05 are different implementation choices; consult the selected architecture guide and toolchain before using one.
 
 **Deeper fixes:**
 - Restructure data layout to meet MMA tile-shape constraints (e.g., `m16n8k16` for BF16).
-- Use shared memory + TMA (Hopper) / TMEM (Blackwell) staging.
+- Match operand staging and accumulator storage to the selected matrix path. Shared-memory operands and register or TMEM accumulators have different lifetime and synchronization rules.
 
 **Exceptions:**
 - Non-matrix workloads (reduction, sort, element-wise) — tensor cores don't help.
 - Small matrices (M, N, K < 32) — tensor-core tiles are too coarse.
 
-**Cross-ref:** Blackwell principle 10; the Blackwell doc's section on tcgen05 has PTX examples.
 
 ---
 
@@ -192,7 +187,6 @@ If `K < 8`: consider batching multiple iterations' results into a vectorized wri
 **Exceptions:**
 - NCCL-style communication — atomics are fundamental there.
 
-**Cross-ref:** Blackwell principle 12.
 
 ---
 
@@ -216,7 +210,6 @@ If `K < 8`: consider batching multiple iterations' results into a vectorized wri
 - Broadcast reads (all lanes read same address) are conflict-free.
 - Low shared-mem access volume — don't bother.
 
-**Cross-ref:** Blackwell principle 4.
 
 ---
 
@@ -235,7 +228,6 @@ If `K < 8`: consider batching multiple iterations' results into a vectorized wri
 **Deeper fixes:**
 - Warp-specialized execution: producer warps and consumer warps with mbarrier instead of `__syncthreads`.
 
-**Cross-ref:** Blackwell principle 16.
 
 ---
 
@@ -271,7 +263,6 @@ If `K < 8`: consider batching multiple iterations' results into a vectorized wri
 **Exceptions:**
 - Large fused kernels (FlashAttention) accept some spill in exchange for larger savings upstream.
 
-**Cross-ref:** Blackwell principle 6.
 
 ---
 
@@ -284,7 +275,6 @@ If `K < 8`: consider batching multiple iterations' results into a vectorized wri
 
 **First-line fix:** add `f` suffix to all literals: `1.0f`, `0.5f`, `3.14f`. Add `__expf` / `__logf` / `__sinf` variants for transcendentals.
 
-**Cross-ref:** Blackwell principle 8.
 
 ---
 
@@ -299,9 +289,8 @@ If `K < 8`: consider batching multiple iterations' results into a vectorized wri
 **First-line fix:** double-buffer. Use two shared-memory tiles; while computing on tile A, load tile B. `__syncthreads` between phases.
 
 **Deeper fixes:**
-- Multi-stage pipeline (3-4 stages on Blackwell — see Blackwell principle 15). Use `cp.async` / TMA for async loads.
+- Multi-stage pipeline: select the stage count from measured wait time and resource use. More stages can lower residency. Choose a supported async copy implementation from the target guide.
 
-**Cross-ref:** Blackwell principle 15.
 
 ---
 
@@ -322,7 +311,6 @@ If `K < 8`: consider batching multiple iterations' results into a vectorized wri
 - Tree reductions in warps (last few steps have half / quarter / ... active). Use `__shfl_down_sync` to handle cleanly.
 - Boundary handling (a few warps at tensor edge) — not worth fighting.
 
-**Cross-ref:** Blackwell principle 5.
 
 ---
 
@@ -338,7 +326,7 @@ If `K < 8`: consider batching multiple iterations' results into a vectorized wri
 
 **First-line fix:** give each scheduler independent work:
 - **Split the chain's state across more warps or CTAs** (e.g. along a dimension each step updates independently) so several chains interleave.
-- **Keep the state in registers (or TMEM)** rather than reloading it from shared memory every step: a shared-memory round trip per step is on the critical path.
+- **Keep the state in a suitable on-chip storage path** rather than reloading it from shared memory every step: a shared-memory round trip per step is on the critical path.
 
 **Deeper fixes:**
 - Fewer, larger steps (a bigger chunk per iteration), trading parallel work inside a step for fewer serial steps.

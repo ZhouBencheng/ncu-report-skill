@@ -225,7 +225,7 @@ def per_pc_values(action, metric_name):
         try:
             v = metric_value_at(m, i)
         except Exception:
-            v = 0
+            v = None
         out.append((pc, v))
     return out
 
@@ -245,136 +245,11 @@ def pc_to_source_line(action, pc):
 
 
 # --- Curated metric sets -----------------------------------------------------
-#
-# Every name below is collected by `ncu --set full` (ncu 2026.1 and 2026.3) on Blackwell
-# (sm_100 / sm_103). For a fuller list and rationale see
-# ../reference/08-metric-names.md. Other GPU generations and future ncu releases
-# may need alternate names: verify with action.metric_names() if one is None.
+# Existing imports retain the B200/B300 list. New consumers select by report identity.
+from ncu_profiles import metric_names, select_target, metric_evidence  # noqa: E402
 
-KEY_METRICS = [
-    # Launch geometry
-    "launch__grid_size",
-    "launch__block_size",
-    "launch__grid_dim_x",
-    "launch__grid_dim_y",
-    "launch__grid_dim_z",
-    "launch__block_dim_x",
-    "launch__waves_per_multiprocessor",
-    "launch__registers_per_thread",
-    "launch__shared_mem_per_block",
-    "launch__thread_count",
-    "launch__occupancy_limit_blocks",
-    "launch__occupancy_limit_registers",
-    "launch__occupancy_limit_shared_mem",
-    "launch__occupancy_limit_warps",
-    "device__attribute_multiprocessor_count",
-    "device__attribute_max_warps_per_multiprocessor",
-    # Timing and the clock the kernel ran at (ncu's --clock-control)
-    "gpu__time_duration.sum",
-    "sm__cycles_elapsed.avg.per_second",
-    "smsp__cycles_active.avg",
-    # SOL
-    "sm__throughput.avg.pct_of_peak_sustained_elapsed",
-    "gpu__compute_memory_throughput.avg.pct_of_peak_sustained_elapsed",
-    "gpu__compute_memory_access_throughput.avg.pct_of_peak_sustained_elapsed",
-    "l1tex__throughput.avg.pct_of_peak_sustained_active",
-    # Occupancy
-    "sm__maximum_warps_per_active_cycle_pct",
-    "sm__warps_active.avg.pct_of_peak_sustained_active",
-    "sm__warps_active.avg.per_cycle_active",
-    "sm__warps_active.max.per_cycle_active",
-    "sm__warps_active.min.per_cycle_active",
-    "smsp__warps_active.avg.per_cycle_active",
-    "smsp__warps_eligible.avg.per_cycle_active",
-    "smsp__warps_eligible.max.per_cycle_active",
-    # IPC
-    "sm__inst_executed.avg.per_cycle_active",
-    "smsp__issue_active.avg.per_cycle_active",
-    "smsp__issue_active.avg.pct_of_peak_sustained_active",
-    "smsp__inst_executed.avg",
-    # Compute pipes
-    "sm__inst_executed_pipe_fma.avg.pct_of_peak_sustained_active",
-    "sm__inst_executed_pipe_fma.avg.pct_of_peak_sustained_elapsed",
-    "sm__inst_executed_pipe_alu.avg.pct_of_peak_sustained_active",
-    "sm__inst_executed_pipe_lsu.avg.pct_of_peak_sustained_active",
-    "sm__inst_executed_pipe_lsu.avg.pct_of_peak_sustained_elapsed",
-    "sm__inst_executed_pipe_xu.avg.pct_of_peak_sustained_active",
-    "sm__inst_executed_pipe_adu.avg.pct_of_peak_sustained_active",
-    # Tensor core
-    "sm__pipe_tensor_cycles_active.avg.pct_of_peak_sustained_active",
-    "sm__pipe_tensor_cycles_active.avg.pct_of_peak_sustained_elapsed",
-    "sm__ops_path_tensor_op_hmma_src_bf16_dst_fp32_sparsity_off.avg",
-    "sm__ops_path_tensor_op_utchmma_src_bf16_dst_fp32_sparsity_off.avg.pct_of_peak_sustained_elapsed",
-    "sm__mem_tensor_cycles_active.avg.pct_of_peak_sustained_elapsed",
-    "smsp__sass_inst_executed_op_utcmma.sum",
-    # DRAM
-    "gpu__dram_throughput.avg.pct_of_peak_sustained_elapsed",   # reads + writes
-    "dram__bytes_read.sum",
-    "dram__bytes_read.sum.pct_of_peak_sustained_elapsed",
-    "dram__bytes_read.sum.per_second",
-    "dram__bytes_write.sum",
-    "dram__bytes_write.sum.pct_of_peak_sustained_elapsed",
-    "dram__sectors_read.sum",
-    "dram__sectors_write.sum",
-    # Caches
-    "l1tex__t_sector_hit_rate.pct",
-    "lts__t_sector_hit_rate.pct",
-    "l1tex__t_sector_pipe_lsu_mem_global_op_ld_hit_rate.pct",
-    "l1tex__t_sector_pipe_lsu_mem_global_op_st_hit_rate.pct",
-    # Memory instruction counts
-    "smsp__sass_inst_executed_op_global_ld.sum",
-    "smsp__sass_inst_executed_op_global_st.sum",
-    "smsp__sass_inst_executed_op_local_ld.sum",
-    "smsp__sass_inst_executed_op_local_st.sum",
-    "smsp__sass_inst_executed_op_shared.sum",
-    "smsp__sass_inst_executed_op_shared_ld.sum",
-    "smsp__sass_inst_executed_op_shared_st.sum",
-    # Sectors / requests (for coalescing analysis)
-    "l1tex__t_sectors_pipe_lsu_mem_global_op_ld.sum",
-    "l1tex__t_sectors_pipe_lsu_mem_global_op_ld_lookup_hit.sum",
-    "l1tex__t_sectors_pipe_lsu_mem_global_op_ld_lookup_miss.sum",
-    "l1tex__t_sectors_pipe_lsu_mem_global_op_st.sum",
-    "l1tex__t_requests_pipe_lsu_mem_global_op_ld.sum",
-    "l1tex__t_requests_pipe_lsu_mem_global_op_st.sum",
-    "smsp__sass_average_data_bytes_per_sector_mem_global_op_st.ratio",
-    # Stall reasons — aggregate ratios
-    "smsp__average_warps_issue_stalled_long_scoreboard_per_issue_active.ratio",
-    "smsp__average_warps_issue_stalled_short_scoreboard_per_issue_active.ratio",
-    "smsp__average_warps_issue_stalled_wait_per_issue_active.ratio",
-    "smsp__average_warps_issue_stalled_barrier_per_issue_active.ratio",
-    "smsp__average_warps_issue_stalled_membar_per_issue_active.ratio",
-    "smsp__average_warps_issue_stalled_math_pipe_throttle_per_issue_active.ratio",
-    "smsp__average_warps_issue_stalled_mio_throttle_per_issue_active.ratio",
-    "smsp__average_warps_issue_stalled_lg_throttle_per_issue_active.ratio",
-    "smsp__average_warps_issue_stalled_tex_throttle_per_issue_active.ratio",
-    "smsp__average_warps_issue_stalled_not_selected_per_issue_active.ratio",
-    "smsp__average_warps_issue_stalled_branch_resolving_per_issue_active.ratio",
-    "smsp__average_warps_issue_stalled_dispatch_stall_per_issue_active.ratio",
-    "smsp__average_warps_issue_stalled_drain_per_issue_active.ratio",
-    "smsp__average_warps_issue_stalled_no_instruction_per_issue_active.ratio",
-    "smsp__average_warps_issue_stalled_sleeping_per_issue_active.ratio",
-    "smsp__average_warps_issue_stalled_misc_per_issue_active.ratio",
-    # Stall reasons — per-PC (SourceCounters section, part of --set full)
-    "smsp__pcsamp_sample_count",
-    "smsp__pcsamp_warps_issue_stalled_long_scoreboard",
-    "smsp__pcsamp_warps_issue_stalled_short_scoreboard",
-    "smsp__pcsamp_warps_issue_stalled_wait",
-    "smsp__pcsamp_warps_issue_stalled_barrier",
-    "smsp__pcsamp_warps_issue_stalled_math_pipe_throttle",
-    "smsp__pcsamp_warps_issue_stalled_mio_throttle",
-    "smsp__pcsamp_warps_issue_stalled_lg_throttle",
-    "smsp__pcsamp_warps_issue_stalled_not_selected",
-    "smsp__pcsamp_warps_issue_stalled_dispatch_stall",
-    "smsp__pcsamp_warps_issue_stalled_drain",
-    "smsp__pcsamp_warps_issue_stalled_no_instructions",
-    "smsp__pcsamp_warps_issue_stalled_selected",
-    "smsp__pcsamp_warps_issue_stalled_branch_resolving",
-    "smsp__pcsamp_warps_issue_stalled_membar",
-    "smsp__pcsamp_warps_issue_stalled_sleeping",
-    "smsp__pcsamp_warps_issue_stalled_misc",
-    "smsp__pcsamp_warps_issue_stalled_tex_throttle",
-]
-B200_KEY_METRICS = KEY_METRICS  # the name older scripts import
+KEY_METRICS = metric_names("sm100")
+B200_KEY_METRICS = KEY_METRICS
 
 
 # --- NCU rule results --------------------------------------------------------
@@ -403,21 +278,31 @@ def rule_speedups(action):
     the part the rule is about, "global": of the whole kernel), severity
     (OPT/WRN/INF/OK/ERR), section, rule, title, message.
     """
+    read_rules = getattr(action, "rule_results", None)
+    if not callable(read_rules):
+        return None
+    try:
+        results = read_rules()
+    except Exception:
+        return None
     out = []
-    for rr in action.rule_results():
-        est = rr.speedup_estimation() if rr.has_speedup_estimation() else {}
-        msg = rr.rule_message() if rr.has_rule_message() else {}
-        if not msg.get("message") and not est:
-            continue
-        out.append({
-            "speedup": est.get("speedup"),
-            "speedup_type": _SPEEDUP_TYPE.get(est.get("type")),
-            "severity": _SEVERITY.get(msg.get("type"), "?"),
-            "section": rr.section_identifier(),
-            "rule": rr.rule_identifier(),
-            "title": msg.get("title", ""),
-            "message": _plain(msg.get("message", "")),
-        })
+    try:
+        for rr in results:
+            est = rr.speedup_estimation() if rr.has_speedup_estimation() else {}
+            msg = rr.rule_message() if rr.has_rule_message() else {}
+            if not msg.get("message") and not est:
+                continue
+            out.append({
+                "speedup": est.get("speedup"),
+                "speedup_type": _SPEEDUP_TYPE.get(est.get("type")),
+                "severity": _SEVERITY.get(msg.get("type"), "?"),
+                "section": rr.section_identifier(),
+                "rule": rr.rule_identifier(),
+                "title": msg.get("title", ""),
+                "message": _plain(msg.get("message", "")),
+            })
+    except Exception:
+        return None
     out.sort(key=lambda r: -(r["speedup"] or 0.0))
     return out
 
@@ -454,17 +339,29 @@ def pm_series(action, name):
         m = action[name]
     except Exception:
         return None
-    timelines = action.timelines() if hasattr(action, "timelines") else None
-    if timelines is not None:
-        m = timelines.aligned_metric(m) or m
-    n = m.num_instances()
+    read_timelines = getattr(action, "timelines", None)
+    if callable(read_timelines):
+        try:
+            timelines = read_timelines()
+            align = getattr(timelines, "aligned_metric", None)
+            if callable(align):
+                m = align(m) or m
+        except Exception:
+            pass  # Older readers can expose the method without supporting this report.
+    try:
+        n = m.num_instances()
+    except Exception:
+        return None
     if n < 2:
         return None
     vals = [metric_value_at(m, i) for i in range(n)]
     ts = None
-    if m.has_correlation_ids():
-        cor = m.correlation_ids()
-        ts = [cor.as_uint64(i) for i in range(n)]
+    try:
+        if m.has_correlation_ids():
+            cor = m.correlation_ids()
+            ts = [cor.as_uint64(i) for i in range(n)]
+    except Exception:
+        ts = None
     return ts, vals
 
 
@@ -474,13 +371,24 @@ def stall_reason_names():
             for k in dir(ncu_report) if k.startswith("StallReason_")}
 
 
+def timed_warp_samples(action):
+    """Timed warp samples, or None when the selected reader cannot expose them."""
+    read_samples = getattr(action, "timed_warp_samples", None)
+    if not callable(read_samples):
+        return None
+    try:
+        return read_samples()
+    except Exception:
+        return None
+
+
 def warp_state_timeline(action, buckets):
     """Stall reasons over the kernel's run, from its timed warp samples (PmSampling).
 
     Returns (span_ns, {reason: [share of the samples in each time bucket]}), or None
     when the report has no timed warp samples.
     """
-    samples = action.timed_warp_samples()
+    samples = timed_warp_samples(action)
     if not samples:
         return None
     t0 = min(s["timestamp"] for s in samples)
@@ -492,7 +400,7 @@ def warp_state_timeline(action, buckets):
         totals[b] += 1
         reason = names.get(s["stall_reason"], str(s["stall_reason"]))
         counts.setdefault(reason, [0] * buckets)[b] += 1
-    return span, {r: [c / t if t else 0.0 for c, t in zip(cs, totals)] for r, cs in counts.items()}
+    return span, {r: [c / t if t else None for c, t in zip(cs, totals)] for r, cs in counts.items()}
 
 
 # --- Inlined source lines (for CUTLASS/CuTe-style kernels) ---------------------

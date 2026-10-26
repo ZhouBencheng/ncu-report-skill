@@ -1,0 +1,5 @@
+[
+  "mcc__cycles_elapsed.avg",
+  "mcc__dram_throughput_op_read.avg.pct_of_peak_sustained_elapsed",
+  "mcc__dram_throughput_op_write.avg.pct_of_peak_sustained_elapsed"
+]

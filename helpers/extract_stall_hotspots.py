@@ -84,7 +84,14 @@ def collect_per_pc(action):
                     pc = int(cor.as_double(i))
                 except Exception:
                     continue
-            v = metric_value_at(m, i)
+            try:
+                v = metric_value_at(m, i)
+            except Exception:
+                print(f"Unavailable sample {sn}[{i}]; omitted from hotspot totals", file=sys.stderr)
+                continue
+            if v is None:
+                print(f"Unavailable sample {sn}[{i}]; omitted from hotspot totals", file=sys.stderr)
+                continue
             if v:
                 per_pc[pc][sn] += int(v)
     return per_pc
@@ -137,7 +144,14 @@ def executed_by_line(action, key_of_pc):
         return out
     cor = m.correlation_ids()
     for i in range(n):
-        out[key_of_pc(cor.as_uint64(i))] += int(metric_value_at(m, i) or 0)
+        try:
+            value = metric_value_at(m, i)
+        except Exception:
+            value = None
+        if value is None:
+            print(f"Unavailable inst_executed[{i}]; omitted from instruction totals", file=sys.stderr)
+            continue
+        out[key_of_pc(cor.as_uint64(i))] += int(value)
     return out
 
 

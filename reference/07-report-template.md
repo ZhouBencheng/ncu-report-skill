@@ -12,10 +12,13 @@ Save as `$PROFILE_RUN_DIR/REPORT.md`.
 # `<kernel_name>` Profiling Report
 
 **Kernel:** `<exact kernel name or template instantiation>`
-**Target GPU:** NVIDIA B300 (148 SM, CC 10.3)   (whatever is actually being profiled: `nvidia-smi --query-gpu=name,compute_cap --format=csv`)
+**Target GPU:** observed device name, runtime CC and actual SM count
+**Compiled target:** exact native/virtual target (separate from runtime CC)
+**Collector / reader:** executable/module and versions, recorded separately
+**Coverage:** compiled / numerically checked / collected / parsed / performance-compared; identify which were actually done
 **Nsight Compute:** 2026.x.x (`ncu --version`)
-**Clock:** `--clock-control boost`, SM at X.XX GHz (`sm__cycles_elapsed.avg.per_second`)
-**Compile flags:** `nvcc -O2 -std=c++17 -lineinfo -arch=sm_103a`   (or: the prebuilt library profiled, and that it has line info)
+**Clock / power:** actual collector clock option, observed frequency, platform power/thermal conditions
+**Compile flags:** `nvcc -O2 -std=c++17 -lineinfo -arch=<verified-target>`   (or: the prebuilt library profiled, and that it has line info)
 **Profile date:** YYYY-MM-DD
 **Run directory:** `<profile_root>/<run_name>/`
 
@@ -32,8 +35,10 @@ Save as `$PROFILE_RUN_DIR/REPORT.md`.
 
 Minimal runnable command listing:
 
+    export CUDA_TARGET=<verified_cuda_target>
+
     # Compile
-    nvcc -O2 -std=c++17 -lineinfo -arch=sm_103a harness.cu -o "$PROFILE_RUN_DIR/harness/harness"
+    nvcc -O2 -std=c++17 -lineinfo -arch="$CUDA_TARGET" harness.cu -o "$PROFILE_RUN_DIR/harness/harness"
 
     # Profile (full: SOL, source counters, PM sampling + warp-state timelines)
     ncu --set full --import-source yes \
@@ -86,7 +91,7 @@ Minimal runnable command listing:
 <stall breakdown %, top source-line hotspots (cite file:line + samples + stall type)>
 
 ### 2.4 Tensor Core utilization
-<value or "0%, n/a">
+<measured value (including a measured zero), or the explicit unavailable state and reason>
 
 ### 2.5 SM utilization timeline
 <shape: flat-high / flat-low / tail / sawtooth — reference the ASCII plot in analysis/>

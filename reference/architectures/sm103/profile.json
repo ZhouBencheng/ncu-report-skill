@@ -1,0 +1,13 @@
+{
+  "target": "sm103",
+  "compute_capability": "10.3",
+  "aliases": [
+    "b300",
+    "gb300"
+  ],
+  "name_patterns": [
+    "b300",
+    "gb300"
+  ],
+  "metric_profile": "sm100"
+}

@@ -1,0 +1,16 @@
+{
+  "target": "sm87",
+  "compute_capability": "8.7",
+  "aliases": [
+    "orin",
+    "agx-orin",
+    "jetson agx orin",
+    "jetson orin",
+    "nvidia orin"
+  ],
+  "name_patterns": [
+    "orin"
+  ],
+  "extra_metrics": [],
+  "additional_metrics": "jetson-memory-metrics.json"
+}

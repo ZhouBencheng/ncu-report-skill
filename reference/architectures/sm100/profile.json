@@ -1,0 +1,17 @@
+{
+  "target": "sm100",
+  "compute_capability": "10.0",
+  "aliases": [
+    "b200",
+    "gb200"
+  ],
+  "name_patterns": [
+    "b200",
+    "gb200"
+  ],
+  "extra_metrics": [
+    "sm__ops_path_tensor_op_utchmma_src_bf16_dst_fp32_sparsity_off.avg.pct_of_peak_sustained_elapsed",
+    "sm__mem_tensor_cycles_active.avg.pct_of_peak_sustained_elapsed",
+    "smsp__sass_inst_executed_op_utcmma.sum"
+  ]
+}

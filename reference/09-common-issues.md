@@ -46,13 +46,7 @@ Harmless. The `ctc__*` metrics count chip-to-chip (C2C) link traffic; a system w
 
 ### `Could not deploy stock section files to "/home/USER/Documents/NVIDIA Nsight Compute/..."`
 
-Set `HOME` to a writable directory:
-```bash
-export HOME=/any/writable/path
-ncu [...]
-```
-
-This warning is harmless but noisy. ncu falls back to reading from the CUDA install dir.
+Use the installed collector's supported cache or section-file configuration to select a writable location. Do not repurpose `HOME`: that can redirect unrelated tools and hide the real environment. The warning is harmless when NCU successfully falls back to its installed section files; otherwise record the failure and fix the collector configuration explicitly.
 
 ---
 
@@ -185,10 +179,10 @@ ncu handles CUDA Graph launches fine — each captured kernel shows up as a sepa
 
 ### Results jitter between runs
 
-1. **Check the clock.** ncu locks the clock by default (`boost` in ncu 2026.1–2026.3, `base` before); a run with
+1. **Check the clock.** On platforms where NCU clock control is supported, ncu locks the clock by default (`boost` in ncu 2026.1–2026.3, `base` before); a run with
    `--clock-control none` and no outer lock profiles at whatever clock the GPU picks. Compare
    `sm__cycles_elapsed.avg.per_second` between the reports, and lock your own clock only as
-   [`03-collection.md`](03-collection.md#gpu-clocks) describes.
+   [`03-collection.md`](03-collection.md#gpu-clocks-and-measurement-conditions) describes.
 2. **Enable persistent mode** (avoids driver unload between invocations):
    ```bash
    sudo nvidia-smi -pm 1
@@ -208,7 +202,7 @@ ncu handles CUDA Graph launches fine — each captured kernel shows up as a sepa
 ### "`sm__throughput = X%`, is that good?"
 
 It depends on the kernel type:
-- GEMM / matmul: should be 50%+ on B200 / B300. Below 30% is bad.
+- GEMM / matmul: evaluate the selected dtype/shape and target's attainable throughput. A utilization threshold from another device is not a diagnosis.
 - Element-wise / reduction: usually 10-30%, because they're DRAM-BW-bound.
 - Attention / recurrence kernels: varies wildly; compare against a reference implementation.
 

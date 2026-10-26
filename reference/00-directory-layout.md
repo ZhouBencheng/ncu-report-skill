@@ -70,7 +70,7 @@ Inside each run subdirectory, use this structure:
 │   ├── <kernel>_harness            ← compiled binary (with -lineinfo)
 │   └── build_command.sh            ← optional: shell script that compiled it
 ├── reports/
-│   ├── full_<tag1>.ncu-rep         ← ncu --set full output (includes source counters + PM sampling)
+│   ├── full_<tag1>.ncu-rep         ← ncu --set full output (available sections depend on target/collector)
 │   └── full_<tag2>.ncu-rep
 └── analysis/
     ├── metrics_all_<tag>.json      ← 2000+ metrics, full archive
@@ -150,8 +150,8 @@ Scripts and ncu invocations should pick up the run directory from a single varia
 export PROFILE_RUN_DIR=<profile_root>/<kernel>_v1_baseline
 mkdir -p "$PROFILE_RUN_DIR"/{harness,reports,analysis}
 
-# build harness (sm_100a: B200; sm_103a: B300 — see 02-harness-guide.md)
-nvcc -O2 -std=c++17 -lineinfo -arch=sm_100a \
+# build harness using the target chosen in 02-harness-guide.md
+nvcc -O2 -std=c++17 -lineinfo -arch="$CUDA_TARGET" \
      harness.cu -o "$PROFILE_RUN_DIR/harness/kernel_harness"
 
 # run ncu (where the GPU is)

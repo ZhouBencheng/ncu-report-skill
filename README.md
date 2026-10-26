@@ -7,7 +7,7 @@
 > For bug reports, feature requests, and discussions, please use the main KDA repository:
 > https://github.com/mit-han-lab/kernel-design-agents
 
-A Claude Code skill for profiling CUDA kernels with Nsight Compute on NVIDIA Blackwell (B200 / B300, sm_100 / sm_103). Covers the full workflow: get a profile target (the real code, or a standalone harness), run `ncu`, parse reports with the Python API, walk through six analysis dimensions, match patterns to a diagnosis playbook, and write an evidence-backed optimization report.
+A Claude Code skill for profiling CUDA kernels with Nsight Compute with target-aware guidance for B200/B300, RTX 4090, Jetson Orin and Thor. Covers the full workflow: get a profile target (the real code, or a standalone harness), run `ncu`, parse reports with the Python API, walk through six analysis dimensions, match patterns to a diagnosis playbook, and write an evidence-backed optimization report.
 
 Written against Nsight Compute 2026.3.1, the newest release (CUDA 13.2 bundles 2026.1.1; the skill's commands and helpers handle both): its sets and sections, report format, rule-result API, PM-sampling series and timelines, and default clock control.
 
@@ -38,9 +38,9 @@ The skill is self-contained: reference docs, reusable helper scripts (harness te
 │   ├── 05-analysis-dimensions.md     ← six analysis dimensions
 │   ├── 06-diagnosis-playbook.md      ← pattern → cause → fix
 │   ├── 07-report-template.md         ← final report structure
-│   ├── 08-metric-names.md            ← Blackwell metric names (ncu 2026.3)
+│   ├── 08-metric-names.md            ← shared metric-state and normalization contract
 │   └── 09-common-issues.md           ← permissions, PM sampling, JIT toolchains, etc.
-└── blackwell-cuda-programming.md     ← companion reference: Blackwell programming principles
+└── blackwell-cuda-programming.md     ← compatibility link to reference/architectures/sm100/programming.md
 ```
 
 ---
@@ -121,7 +121,7 @@ python3 ~/.claude/skills/ncu-report-skill/helpers/analyze_reports.py \
     --run-dir "$RUN" \
     --report "$RUN/reports/full_<tag>.ncu-rep" --tag <tag>
 
-# Per-line stall hotspots (--set full has the source counters; --binary for inlined code)
+# Per-line stall hotspots (when SourceCounters are present; --binary for inlined code)
 python3 ~/.claude/skills/ncu-report-skill/helpers/extract_stall_hotspots.py \
     --run-dir "$RUN" \
     --report "$RUN/reports/full_<tag>.ncu-rep" --tag <tag>
@@ -148,10 +148,22 @@ The C++ harness template + safetensors loader live under `helpers/`; copy them i
 - The `ncu_report` Python module (ships with Nsight Compute under `extras/python/`)
 - An NVIDIA GPU with permission to access performance counters (see `reference/09-common-issues.md` if `ncu` reports `ERR_NVGPUCTRPERM`)
 
-The skill is written for Blackwell (B200 / B300) metric names, but the workflow and helpers work on any CUDA GPU Nsight Compute supports. Metric names may differ on older GPUs (A100, H100) and other ncu releases — see `reference/08-metric-names.md` for guidance.
+The analyzer routes by each report's observed GPU identity and uses common plus selected-architecture candidate metrics. Unknown identity uses generic analysis, never B200 defaults. Collector availability and report coverage remain separate from architecture routing; see [metric semantics](reference/08-metric-names.md) and [validated environments](reference/validation.md).
 
 ---
 
 ## License
 
 MIT
+
+## Target-specific loading
+
+The root skill loads a shared workflow and one relevant guide under `reference/architectures/`. SM100 programming/collection references remain there as a single source; SM103/SM110 reuse metric candidates where applicable without inheriting device limits or binary compatibility. `helpers/preflight.py` discovers the actual collector, metric inventory and sections before collection.
+
+```bash
+python3 helpers/preflight.py --ncu /actual/path/to/ncu --output "$PROFILE_RUN_DIR/preflight.json"
+python3 helpers/analyze_reports.py --run-dir "$PROFILE_RUN_DIR" --report report.ncu-rep --tag case
+python3 -m unittest discover -s tests -v
+```
+
+No GPU is needed for the unit tests. Real-device evidence and its limits are recorded in [validation](reference/validation.md).

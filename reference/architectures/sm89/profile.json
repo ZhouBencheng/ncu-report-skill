@@ -1,0 +1,22 @@
+{
+  "target": "sm89",
+  "compute_capability": "8.9",
+  "aliases": [
+    "4090",
+    "rtx4090",
+    "ada",
+    "geforce rtx 4090",
+    "nvidia geforce rtx 4090"
+  ],
+  "name_patterns": [
+    "rtx 4090",
+    "rtx 4080",
+    "rtx 4070",
+    "rtx 4060",
+    "rtx 4050",
+    "rtx 6000 ada",
+    "l40",
+    "l4"
+  ],
+  "extra_metrics": []
+}

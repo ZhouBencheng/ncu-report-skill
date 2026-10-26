@@ -38,7 +38,7 @@ If any of 1-4 are unclear, settle them before profiling: ask whoever set the tas
 
 ## Phase 1 — Environment check
 
-Steps 2 and 5, and every later `ncu` collection, need the GPU; run them where your environment runs GPU commands (see "Where the GPU is" in [`../SKILL.md`](../SKILL.md)). The rest runs anywhere.
+Steps 2 and 5, and every later `ncu` collection, need the GPU; use the environment's approved GPU execution path (see [Where GPU work runs](03-collection.md#where-gpu-work-runs)). The rest runs anywhere.
 
 ```bash
 # 1. ncu CLI is available
@@ -58,7 +58,7 @@ python3 <skill>/helpers/ncu_utils.py     # prints where ncu_report was found
 ncu --section SpeedOfLight -c 1 <any command that launches a kernel>
 ```
 
-`<skill>` is this skill's directory. Set a writable `HOME` before running ncu if yours is not, to silence the "Could not deploy stock section files" warning.
+`<skill>` is this skill's directory. If NCU cannot deploy section files, configure a supported writable cache/location for that installation; do not repurpose the shell's home directory.
 
 ---
 
@@ -80,7 +80,7 @@ Either way, **the kernel must carry line info**. Without it, source-level analys
 
 ## Phase 3 — Collect profiles
 
-One `ncu` invocation per (kernel, dispatch path, representative workload) — **outputs go under `$PROFILE_RUN_DIR/reports/`**. Details in [`03-collection.md`](03-collection.md).
+After environment preflight and target-guide selection, use one `ncu` invocation per (kernel, dispatch path, representative workload) — **outputs go under `$PROFILE_RUN_DIR/reports/`**. Details in [`03-collection.md`](03-collection.md).
 
 ```bash
 ncu --set full --import-source yes \
@@ -90,7 +90,7 @@ ncu --set full --import-source yes \
     "$PROFILE_RUN_DIR/harness/your_harness" [args]
 ```
 
-`--set full` holds every section the helpers read, including the per-PC stall samples (SourceCounters) and the PM-sampling timelines and timed warp samples (PmSampling). Name the output with its `.ncu-rep` extension: without one, ncu 2026.3 writes `.ncu-repz`. A `--set full` run replays the kernel about 50 times: seconds for a short kernel, minutes for a long one. Plan your time budget.
+`--set full` membership and measurement availability depend on the installed collector and target. Check source/PM coverage in the resulting report; unavailable measurements remain explicit gaps. Name the output with its `.ncu-rep` extension: without one, ncu 2026.3 writes `.ncu-repz`. A `--set full` run replays the kernel about 50 times: seconds for a short kernel, minutes for a long one. Plan your time budget.
 
 ---
 
@@ -102,8 +102,9 @@ Minimum analysis artifacts to produce:
 
 | Artifact | Tool | What it tells you |
 |---|---|---|
+| `metrics_evidence_<tag>.json` | `analyze_reports.py` | Target, separate collector/reader provenance, raw units and value states |
 | `metrics_key_<tag>.txt` | `analyze_reports.py` | ~100 curated metrics (launch geom, clock, SOL, occupancy, stalls, sectors) |
-| `metrics_all_<tag>.json` | `analyze_reports.py` | Full 2000+ metrics, archive for later |
+| `metrics_all_<tag>.json` | `analyze_reports.py` | All metrics actually present, archive for later |
 | `rules_<tag>.txt` | `analyze_reports.py` | NCU's rule-engine results, highest `Est. Speedup` first |
 | `compare_<a>_vs_<b>.txt` | `analyze_reports.py` | Side-by-side metric comparison between workloads / versions |
 | `stall_hotspots_<tag>.txt` | `extract_stall_hotspots.py` | Top source lines ranked by stall samples (`--binary`: by the kernel's own lines) |

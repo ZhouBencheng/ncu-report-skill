@@ -1,6 +1,21 @@
 # Profile Collection Commands
 
-This document lists the exact `ncu` commands you should run, in what order, and what each flag does. They are written against Nsight Compute 2026.3 (differences from 2026.1, which CUDA 13.2 bundles, are noted); `ncu --help`, `ncu --list-sets` and `ncu --list-sections` show what your version has.
+The operational recipes below are shared: selecting launches, importing source, warm-up, replay and exporting reports. Select sections and clock behavior from the actual device/collector. Collector and report-reader versions are separate facts.
+
+After creating a new run directory and setting `PROFILE_RUN_DIR`, discover the environment:
+
+```bash
+python3 helpers/preflight.py --ncu /actual/path/to/ncu --device 0 \
+    --output "$PROFILE_RUN_DIR/preflight.json"
+```
+
+This read-only helper identifies the device, queries version/help/sets/sections/metrics and proposes `collection_options`; it launches no kernel and changes no clocks. Inspect those options, then read only the selected [target guide](../SKILL.md#select-the-environment-before-loading-architecture-advice). The examples below assume their named sections/options were found. It proposes `--clock-control none` for identified Orin/Thor targets and whenever L4T is observed, even if unavailable `nvidia-smi` leaves the exact device generic. L4T evidence does not invent a device identity. Discovery is not a successful permission test.
+
+For an existing report, skip collection and use `helpers/analyze_reports.py`; it selects the target from that report, with generic fallback for unknown identity.
+
+## Where GPU work runs
+
+Only the collector and the program it launches need the GPU. Use the environment's approved GPU broker, scheduler, container or remote-execution path rather than assuming the current shell owns a GPU. Keep the run directory visible to collection and analysis, and use paths valid in the collector's environment. Harness builds for an explicit target, `ncu --import`, and the Python analysis helpers can run without a GPU. Copy only the sanitized reports or derived artifacts that the authorization permits; do not embed private host identity in committed evidence.
 
 ---
 
@@ -8,7 +23,7 @@ This document lists the exact `ncu` commands you should run, in what order, and 
 
 - Line info in the kernel: `-lineinfo` in the compile flags, or a prebuilt binary that has it (see `02-harness-guide.md`).
 - `ncu` available on PATH.
-- Writable `$HOME` so ncu can cache section files.
+- A writable collector cache/configuration location when the installed NCU requires one; do not repurpose the shell's home directory.
 - Kernel name known (`cuobjdump -res-usage <binary> | grep Function`, or the survey below).
 - ncu launches the program itself, not a launcher around it. `ncu ... uv run python app.py` hangs (no kernel is ever profiled, in ncu 2026.1 and 2026.3 alike): put ncu inside the launcher, `uv run ncu ... python app.py`, or give ncu the interpreter, `ncu ... .venv/bin/python app.py`. The same goes for other launchers that start the interpreter as a child process.
 
@@ -42,14 +57,13 @@ Each entry has the kernel's function name (what `-k` matches), its launch shape,
 
 ---
 
-## Recipe 1: Full profile (the one report the analysis needs)
+## Recipe 1: Overview profile when the installed full set is suitable
 
-Collects every standard section — SOL, occupancy, memory, compute, scheduler, warp state, the per-PC stall samples (SourceCounters) and the PM-sampling timelines and timed warp samples (PmSampling):
+A full set usually provides a broad overview. Its exact sections and PM/timed-warp coverage depend on collector and target; check the collected report rather than assuming every measurement is present:
 
 ```bash
 ncu --set full \
     --import-source yes \
-    --clock-control boost \
     -k "regex:KERNEL_REGEX" \
     -c 1 \
     -o "$PROFILE_RUN_DIR/reports/full_<tag>.ncu-rep" \
@@ -58,8 +72,7 @@ ncu --set full \
 
 | Flag | Meaning |
 |---|---|
-| `--set full` | Every built-in section, including `SourceCounters` and `PmSampling` |
-| `--clock-control boost` | Locks the clock at boost for each profiled kernel (the default in ncu 2026.1–2026.3); named so the command records it. See [GPU clocks](#gpu-clocks) |
+| `--set full` | Installed full set; inspect its membership and warnings |
 | `--import-source yes` | Embeds the CUDA source files into the report, so the source view works where the source is not (another machine, a container). The files are read where ncu runs, at collection only (it cannot be added to an existing report): when the paths recorded by the build do not exist there, pass `--source-folders DIR,...` with directories visible to that machine or container |
 | `-k "regex:..."` | Only profile kernels whose name matches: the function name by default (`my_kernel`), the full demangled name (`void my_kernel<(int)8>(float *)`) with `--kernel-name-base demangled`. Reduces replay count. |
 | `-c 1` | Only profile the first matching kernel launch. Avoids duplicates when the kernel is called in a loop. |
@@ -81,7 +94,7 @@ ncu --section SourceCounters \
     ./harness [args]
 ```
 
-`extract_stall_hotspots.py` reads either this report or the full one. There is no `source` set: `--set source` is not rejected, but it adds no section (`ncu --set source --list-metrics`: `No metrics to collect found in sections`), so only the sections you name are collected.
+`extract_stall_hotspots.py` reads either this report or the full one. Do not assume a `source` set exists: inspect `--list-sets`, or select the available `SourceCounters` section explicitly. If no source measurements are available, state that limitation and continue with available static metrics.
 
 ---
 
@@ -148,11 +161,11 @@ Takes one or two replay passes. Prints a table directly to stdout. No `-o` outpu
 
 ```bash
 # Before
-ncu --set full --import-source yes --clock-control boost -k "regex:my_kernel" -c 1 \
+ncu --set full --import-source yes -k "regex:my_kernel" -c 1 \
     -o "$PROFILE_RUN_DIR/reports/v1.ncu-rep" ./harness_v1 [args]
 
 # After: the same options, so the reports compare
-ncu --set full --import-source yes --clock-control boost -k "regex:my_kernel" -c 1 \
+ncu --set full --import-source yes -k "regex:my_kernel" -c 1 \
     -o "$PROFILE_RUN_DIR/reports/v2.ncu-rep" ./harness_v2 [args]
 ```
 
@@ -171,27 +184,9 @@ Compare reports collected at the same clock (`--clock-control`, below).
 
 ---
 
-## What each `--set` contains
+## Installed sets and sections
 
-```bash
-ncu --list-sets           # list all sets
-ncu --list-sections       # list all sections
-```
-
-ncu 2026.3:
-
-| Set | Sections included | Use when |
-|---|---|---|
-| `basic` (default) | LaunchStats, Occupancy, SpeedOfLight, WorkloadDistribution | Smoke test — is ncu working at all? |
-| `detailed` | basic + ComputeWorkloadAnalysis, MemoryWorkloadAnalysis (+ chart), SourceCounters, SpeedOfLight_RooflineChart, Tile | Middle ground |
-| `full` | everything above + InstructionStats, MemoryWorkloadAnalysis_Tables, NumaAffinity, Nvlink_Tables / _Topology, PmSampling, SchedulerStats, the hierarchical roofline charts, WarpStateStats, gr10x_UTCMMA_Inference / _Training | First-pass profile. Always start here. |
-| `pmsampling` | PmSampling, gr10x_UTCMMA_Inference, gr10x_UTCMMA_Training | Timelines only (the PM series and the timed warp samples) |
-| `roofline` | SpeedOfLight + the roofline charts, WorkloadDistribution | Roofline only |
-| `nvlink` | Nvlink, Nvlink_Tables, Nvlink_Topology | Multi-GPU traffic |
-
-ncu 2026.3 removed the `PmSampling_WarpStates` section of 2026.1 (`--section PmSampling_WarpStates` is an error there); the stall reasons over time come from the timed warp samples of PmSampling instead (`plot_timeline.py`). With ncu 2026.1, add `--section PmSampling_WarpStates` for its stall-reason PM series.
-
----
+Use `ncu --list-sets` and `ncu --list-sections` for the installed collector. Set membership and PM availability change with version/platform. Detailed NCU 2026.1/2026.3 observations are [version-scoped reference material](architectures/sm100/collection.md), not the contract for every target.
 
 ## Common section additions
 
@@ -220,31 +215,16 @@ A report with several launches holds one action per launch; the helpers analyze 
 
 ---
 
-## GPU clocks
+## GPU clocks and measurement conditions
 
-ncu fixes the clock itself: it locks the GPU clock for every profiled kernel and restores it after, so durations and
-throughputs are comparable between runs. The default is `--clock-control boost` in ncu 2026.1–2026.3 and `base` in older
-versions (`ncu --help` shows it); on a B300, `base` (~1.06 GHz) made kernels ~1.7x slower than `boost` (~2.0 GHz).
-Name the setting in the command so the report says what it ran at. No outer lock is needed.
+Record the collector's actual clock-control default or an explicitly supported override, plus observed frequency. Jetson power/clock controls are platform-specific; preflight proposes `--clock-control none` for identified Orin/Thor targets or an observed L4T platform and changes no settings. Read the selected target guide before changing clocks. Use the same clock, power and thermal conditions for an A/B comparison.
 
-To profile at a fixed clock of your own (to match the clock a timing A/B ran at), lock it around the command and pass
-`--clock-control none`; without it, ncu replaces your lock with its own:
-
-```bash
-# or lock it the way your system provides; check with nvidia-smi -q -d CLOCK
-sudo nvidia-smi -lgc <mhz>,<mhz>
-ncu --clock-control none --set full ... ./harness [args]
-sudo nvidia-smi -rgc
-```
-
-Read the clock a report ran at from `sm__cycles_elapsed.avg.per_second` (in `metrics_key_<tag>.txt`), and give it in the report.
-
----
+`sm__cycles_elapsed.avg.per_second`, when collected, records the observed SM clock. NCU 2026.1/2026.3 B200/B300 defaults and examples are in [the version-specific notes](architectures/sm100/collection.md#gpu-clocks). Do not copy a desktop `nvidia-smi` clock lock to Jetson.
 
 ## Gotchas
 
 - **Profile run time blows up with `--set full`**: that's normal, each replay is a full kernel execution.
 - **`regex:...` doesn't match anything**: `-k` matches the kernel's function name by default (`--kernel-name-base function`): `my_kernel` for `void my_kernel<(int)8, (int)256>(float *)`. To tell template instances apart, add `--kernel-name-base demangled` and match the full name. List the names with the survey (Recipe 0) or `cuobjdump -res-usage ./harness | grep Function | cu++filt`.
 - **No report file**: ncu writes none when it profiled nothing (`==WARNING== No kernels were profiled.`): the `-k` regex didn't match, `-c`/`--launch-skip` skipped past the launches, or the program exited before the kernel ran. ncu does not overwrite an existing report either (`==ERROR== File ... already exists`): pass `-f`, or give each run its own name.
-- **PM Sampling returns nothing**: check the report came from `--set full` (or `--section PmSampling`) and the GPU isn't a vGPU (vGPU doesn't support PM sampling). `plot_timeline.py --list` shows the series a report has.
-- **"Could not deploy stock section files to $HOME"**: set `HOME` to a writable directory first.
+- **PM Sampling returns nothing**: check the installed collector/target supports it and that it was collected. `plot_timeline.py --list` shows report coverage. No timeline means temporal conclusions are unavailable; it does not turn static measurements into zero.
+- **"Could not deploy stock section files to $HOME"**: make the configured cache location writable using the supported collector configuration; do not silently repurpose the shell's home directory.

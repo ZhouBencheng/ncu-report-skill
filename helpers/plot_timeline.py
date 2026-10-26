@@ -39,7 +39,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 from ncu_utils import (  # noqa: E402
     action_tags, kernel_name, pm_series, pm_series_names, select_actions,
-    warp_state_timeline,
+    timed_warp_samples, warp_state_timeline,
 )
 
 
@@ -60,23 +60,25 @@ DEFAULT_PATTERNS = [
 
 def ascii_plot(vals, label, max_rows=20, max_cols=80):
     """Return list of ASCII strings rendering the timeseries (already windowed)."""
-    vals = [v if v is not None else 0.0 for v in vals]
     n = len(vals)
-    if n == 0 or not any(vals):
+    if not n:
+        return [f"\n{label}: no samples"]
+    known = [v for v in vals if v is not None]
+    if not known:
+        return [f"\n{label}: all samples unavailable"]
+    if len(known) == n and not any(known):
         return [f"\n{label}: all zero"]
 
-    # Bucket into max_cols columns
     ncols = min(max_cols, n)
     buckets = []
     for c in range(ncols):
         chunk = vals[c * n // ncols:(c + 1) * n // ncols]
-        buckets.append(sum(chunk) / len(chunk) if chunk else 0.0)
-    mx = max(buckets) or 1.0
-
-    lines = [f"\n{label}", f"  (max={mx:.3g})"]
+        buckets.append(None if any(v is None for v in chunk) else sum(chunk) / len(chunk))
+    mx = max((v for v in buckets if v is not None), default=0) or 1.0
+    lines = [f"\n{label}", f"  (max={mx:.3g}; ? = unavailable sample bucket)"]
     for r in range(max_rows, 0, -1):
         threshold = mx * r / max_rows
-        row = "".join("#" if b >= threshold else " " for b in buckets)
+        row = "".join("?" if b is None else "#" if b >= threshold else " " for b in buckets)
         lines.append(f"  {threshold:8.2g} | {row}")
     lines.append("  " + " " * 10 + "-" * len(buckets))
     lines.append("  " + " " * 10 + " (time →)")
@@ -86,20 +88,28 @@ def ascii_plot(vals, label, max_rows=20, max_cols=80):
 def _active_samples(group, n):
     """Sample indices where the kernel runs: SM activity above 1% of its peak when the group has
     it (memory series carry background noise for the whole capture), else where any series is
-    above 1% of its own peak."""
+    above 1% of its own peak. Unknown samples are retained because they cannot be classified as
+    inactive measured zeros."""
     sm = [v for name, _, v in group if ".sm__cycles_active." in name]
     if sm:
+        if any(x is None for x in sm[0]):
+            return list(range(n))
         peak = max(x or 0 for x in sm[0]) or 1
         return [i for i in range(n) if (sm[0][i] or 0) > 0.01 * peak]
     peaks = [max(x or 0 for x in v) for _, _, v in group]
-    return [i for i in range(n) if any((v[i] or 0) > 0.01 * pk for (_, _, v), pk in zip(group, peaks) if pk)]
+    return [i for i in range(n)
+            if any(v[i] is None or (pk and v[i] > 0.01 * pk)
+                   for (_, _, v), pk in zip(group, peaks))]
 
 
 def plot_replays(action, names, rows, cols):
     """Plot `names`, grouped by the replay (time base) each series was sampled in."""
     replays = {}
     for name in names:
-        ts, vals = pm_series(action, name)
+        series = pm_series(action, name)
+        if series is None:
+            continue
+        ts, vals = series
         key = (ts[0], ts[-1], len(ts)) if ts else name
         replays.setdefault(key, []).append((name, ts, vals))
     out = []
@@ -123,7 +133,7 @@ def plot_warp_states(action, rows, cols, top):
     if result is None:
         return []
     span, shares = result
-    order = sorted(shares, key=lambda r: -sum(shares[r]))[:top]
+    order = sorted(shares, key=lambda r: -sum(v for v in shares[r] if v is not None))[:top]
     out = [f"\n----- warp states over the kernel: share of the timed warp samples per reason, "
            f"{span / 1e3:.1f} us (its own time axis) -----"]
     for reason in order:
@@ -167,13 +177,15 @@ def main():
         for action, t in zip(acts, action_tags(tag, acts)):
             names = pm_series_names(action)
             if args.list:
-                print(f"[{t}] {len(names)} series, {len(action.timed_warp_samples())} timed warp samples")
+                samples = timed_warp_samples(action)
+                sample_count = "unavailable" if samples is None else str(len(samples))
+                print(f"[{t}] {len(names)} series, {sample_count} timed warp samples")
                 print("\n".join(f"  {n}" for n in names))
                 continue
             warp_states = plot_warp_states(action, args.rows, args.cols, args.stall_reasons) \
                 if args.stall_reasons else []
             if not names and not warp_states:
-                print(f"[{t}] no PM sampling series or timed warp samples: collect with --set full",
+                print(f"[{t}] PM timeline unavailable; inspect supported sections and collection coverage. Static metrics remain usable",
                       file=sys.stderr)
                 continue
             dur = action["gpu__time_duration.sum"].value() if "gpu__time_duration.sum" in action.metric_names() else None

@@ -81,10 +81,10 @@ A complete reusable template lives at [`../helpers/harness_template.cu`](../help
 
 Compile with:
 ```bash
-nvcc -O2 -std=c++17 -lineinfo -arch=sm_100a harness.cu -o harness
+nvcc -O2 -std=c++17 -lineinfo -arch="$CUDA_TARGET" harness.cu -o harness
 ```
 
-`-arch` is the target GPU's compute capability: `nvidia-smi --query-gpu=compute_cap --format=csv` where the GPU is — 10.0 (B200) is `sm_100a`, 10.3 (B300) is `sm_103a`. The `a` suffix enables the architecture-specific instructions (tcgen05, TMEM) Blackwell kernels use; plain `sm_100` / `sm_103` builds code without them. Name the architecture explicitly rather than `-arch=native`, so the build works on a machine without the GPU.
+Set `CUDA_TARGET` from the selected GPU **and the kernel's required instructions**. Ordinary native examples: Orin `sm_87`, RTX 4090 `sm_89`, B200 `sm_100`, B300 `sm_103`, Thor `sm_110`. Architecture/family-specific operations can require `a`/`f` targets supported by that compiler. Runtime CC alone does not select the suffix. Record the exact target and inspect `nvcc --list-gpu-code`; do not run an SM100-only binary on another architecture. See the [target routing table](../SKILL.md).
 
 ---
 

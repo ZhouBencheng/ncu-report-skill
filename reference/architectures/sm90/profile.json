@@ -1,0 +1,15 @@
+{
+  "target": "sm90",
+  "compute_capability": "9.0",
+  "aliases": [
+    "hopper",
+    "h100",
+    "h200"
+  ],
+  "name_patterns": [
+    "h100",
+    "h200",
+    "gh200"
+  ],
+  "extra_metrics": []
+}

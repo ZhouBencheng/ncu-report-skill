@@ -1,0 +1,230 @@
+{
+  "schema_version": 1,
+  "checked_on": "2026-10-27",
+  "architecture": "sm87",
+  "runtime_device": {
+    "device": "Orin",
+    "cc_major": 8,
+    "cc_minor": 7,
+    "sm_count": 14,
+    "total_global_memory_bytes": 32188633088,
+    "shared_memory_per_block_bytes": 49152,
+    "shared_memory_per_block_optin_bytes": 166912,
+    "shared_memory_per_sm_bytes": 167936,
+    "l2_bytes": 4194304,
+    "registers_per_sm": 65536,
+    "warp_size": 32,
+    "max_threads_per_sm": 1536,
+    "max_threads_per_block": 1024,
+    "max_blocks_per_sm": 16,
+    "integrated": true,
+    "runtime_version": 12060,
+    "driver_api_version": 12060
+  },
+  "compiled_target": "sm_87",
+  "environment": {
+    "target": "sm87",
+    "nvcc_path": "/usr/local/cuda/bin/nvcc",
+    "cuda": "12.6.85",
+    "ncu": "2025.2.1",
+    "reader": "2026.1.1",
+    "reader_location": "separate aarch64 validation host",
+    "driver": "540.4.0",
+    "os": "Ubuntu 22.04.5 LTS",
+    "l4t": "R36.4.7",
+    "power_mode_observed": "MAXN",
+    "counter_privilege": "sudo -n",
+    "bundled_reader_limitation": "Installed NCU 2025.2.1 _ncu_report.so is x86-64 on this aarch64 installation; read reports with installed aarch64 NCU 2026.1.1 reader on the separate validation host. This is not a statement about every 2025.2.1 package."
+  },
+  "sources": [
+    {
+      "file": "tests/gpu/validation.cu",
+      "sha256": "41a915a82c2c293de188093a15f5f6c50b548e8aa655ebf7b0da126b23a6d330",
+      "provenance": "Original validation probe authored for this change; no copied upstream implementation.",
+      "build_argv": [
+        "/usr/local/cuda/bin/nvcc",
+        "-O2",
+        "-lineinfo",
+        "-arch=sm_87",
+        "validation.cu",
+        "-o",
+        "validation"
+      ],
+      "build_result": "passed",
+      "run_argv": [
+        "timeout",
+        "15",
+        "./validation"
+      ],
+      "run_result": "passed"
+    },
+    {
+      "file": "tests/gpu/instruction-probe.cu",
+      "sha256": "1b29f305ce390d3208ece80b66b3c71664a1cce1f3c51d3560278a552e1f301e",
+      "provenance": "Original validation probe authored for this change; no copied upstream implementation.",
+      "build_argv": [
+        "/usr/local/cuda/bin/nvcc",
+        "-O2",
+        "-lineinfo",
+        "-arch=sm_87",
+        "instruction-probe.cu",
+        "-o",
+        "instruction-probe"
+      ],
+      "build_result": "passed",
+      "run_argv": [
+        "timeout",
+        "15",
+        "./instruction-probe"
+      ],
+      "run_result": "passed"
+    }
+  ],
+  "generic_correctness": {
+    "vector_copy": {
+      "elements": 262144,
+      "correct": true
+    },
+    "block_reduce": {
+      "elements": 262144,
+      "correct": true
+    },
+    "matrix_multiply": {
+      "shape": [
+        64,
+        64,
+        64
+      ],
+      "dtype": "float32",
+      "correct": true,
+      "max_absolute_error": 0
+    },
+    "performance_claim": null
+  },
+  "instruction_correctness": {
+    "device": "Orin",
+    "compute_capability": [
+      8,
+      7
+    ],
+    "cp_async_4byte_copy": {
+      "elements": 65536,
+      "correct": true
+    },
+    "wmma_bf16_fp32": {
+      "shape": [
+        16,
+        16,
+        16
+      ],
+      "correct": true,
+      "absolute_tolerance": 1e-05,
+      "max_absolute_error": 0
+    },
+    "performance_claim": null
+  },
+  "profiling": [
+    {
+      "file": "basic.ncu-rep",
+      "sha256": "40044ccb7506293aaf204803c5bd45f0e234ff49609c9815db3c7c17ec0c2c1c",
+      "collection_argv": [
+        "ncu",
+        "--set",
+        "basic",
+        "--clock-control",
+        "none",
+        "--import-source",
+        "yes",
+        "-o",
+        "basic.ncu-rep",
+        "./validation"
+      ],
+      "collection_result": "passed",
+      "counter_privilege": "sudo -n",
+      "reader_version": "2026.1.1",
+      "reader_location": "separate aarch64 validation host",
+      "read_result": "passed",
+      "actions": 3,
+      "metric_counts": [
+        501,
+        501,
+        501
+      ],
+      "reader_api": {
+        "rule_results": true,
+        "timed_warp_samples": true,
+        "source_info": true
+      },
+      "pm_series_instances": {},
+      "nonempty_pcsamp_metrics": 0
+    },
+    {
+      "file": "detail.ncu-rep",
+      "sha256": "77c45e4f0e14770f56af79dd8522bf4f5a8ff9c8d6ca436d8826c1b9291b33ec",
+      "collection_argv": [
+        "ncu",
+        "--set",
+        "basic",
+        "--section",
+        "SourceCounters",
+        "--section",
+        "PmSampling",
+        "--clock-control",
+        "none",
+        "--import-source",
+        "yes",
+        "-k",
+        "regex:vector_copy",
+        "-c",
+        "1",
+        "-o",
+        "detail.ncu-rep",
+        "./validation"
+      ],
+      "collection_result": "passed",
+      "counter_privilege": "sudo -n",
+      "reader_version": "2026.1.1",
+      "reader_location": "separate aarch64 validation host",
+      "read_result": "passed",
+      "actions": 1,
+      "metric_counts": [
+        618
+      ],
+      "reader_api": {
+        "rule_results": true,
+        "timed_warp_samples": true,
+        "source_info": true
+      },
+      "pm_series_instances": {
+        "pmsampling:sm__pipe_tensor_cycles_active_realtime.avg.pct_of_peak_sustained_elapsed": 414
+      },
+      "nonempty_pcsamp_metrics": 37
+    }
+  ],
+  "scope": {
+    "proven": [
+      "native compilation",
+      "CUDA runtime device identity",
+      "vector copy correctness",
+      "block reduction correctness",
+      "FP32 64x64x64 SIMT matrix multiply correctness",
+      "ordinary 4-byte cp.async global-to-shared copy correctness",
+      "one-warp BF16-input FP32-accumulator WMMA 16x16x16 correctness",
+      "basic NCU collection",
+      "SourceCounters and PmSampling collection",
+      "report-reader scalar extraction"
+    ],
+    "not_proven": [
+      "TMA",
+      "WGMMA",
+      "tcgen05",
+      "TMEM",
+      "2-CTA cooperative kernels",
+      "all shapes or dtypes",
+      "optimization speedup"
+    ],
+    "performance_claim": null,
+    "clock_or_power_changes": false,
+    "device_facts_are_observed_sku_configuration_not_architecture_constants": true
+  }
+}
