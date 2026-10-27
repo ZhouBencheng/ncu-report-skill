@@ -39,7 +39,8 @@ The skill is self-contained: reference docs, reusable helper scripts (harness te
 │   ├── 06-diagnosis-playbook.md      ← pattern → cause → fix
 │   ├── 07-report-template.md         ← final report structure
 │   ├── 08-metric-names.md            ← shared metric-state and normalization contract
-│   └── 09-common-issues.md           ← permissions, PM sampling, JIT toolchains, etc.
+│   ├── 09-common-issues.md           ← permissions, PM sampling, JIT toolchains, etc.
+│   └── validation.md                 ← measured environments, outcomes and limitations
 └── blackwell-cuda-programming.md     ← compatibility link to reference/architectures/sm100/programming.md
 ```
 
@@ -163,7 +164,8 @@ The root skill loads a shared workflow and one relevant guide under `reference/a
 ```bash
 python3 helpers/preflight.py --ncu /actual/path/to/ncu --output "$PROFILE_RUN_DIR/preflight.json"
 python3 helpers/analyze_reports.py --run-dir "$PROFILE_RUN_DIR" --report report.ncu-rep --tag case
-python3 -m unittest discover -s tests -v
 ```
 
-No GPU is needed for the unit tests. Real-device evidence and its limits are recorded in [validation](reference/validation.md).
+Real-device outcomes, reader limitations and historical source provenance are summarized in [validation](reference/validation.md). The installed package contains the workflow, helpers and runtime data; regression sources and experiment receipts remain in Git history.
+
+The eight shipped JSON files are runtime data: six architecture profiles, common metric candidates and Jetson memory metric candidates. Helper-generated preflight and analysis JSON remain normal run outputs. Keep those outputs, harnesses and `.ncu-rep` files in the profiled project's run directory, outside this skill package ([layout](reference/00-directory-layout.md)).

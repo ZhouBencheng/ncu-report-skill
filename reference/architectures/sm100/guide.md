@@ -12,6 +12,6 @@ Read only the relevant detail:
 
 Generic diagnosis is in [the common playbook](../../06-diagnosis-playbook.md). For low Tensor utilization, distinguish MMA execution, TMEM traffic and pipeline waits; neither the TMEM counter nor an instruction count alone measures useful matrix work. `tcgen05.cp` copies shared memory to TMEM and is not a substitute for global-to-shared TMA or `cp.async`.
 
-No B200 device was supplied for the new adaptation campaign. Original metric values/order and parsing behavior are covered by offline regression; that does not claim a new B200 hardware run. See [validation](../../validation.md).
+No B200 device was supplied for the new adaptation campaign. Historical offline regression checked original metric values/order and parsing behavior; its sources remain in Git history. That does not claim a new B200 hardware run. See [validation](../../validation.md).
 
 Sources: [GPU CC](https://developer.nvidia.com/cuda/gpus), [Blackwell tuning](https://docs.nvidia.com/cuda/blackwell-tuning-guide/index.html), [PTX target notes](https://docs.nvidia.com/cuda/parallel-thread-execution/index.html).

@@ -6,7 +6,7 @@
 
 ## Top-level rule
 
-**All profiling artifacts live under one profile root.** Use the directory your project names for profiling artifacts (look in its README, AGENTS.md or contributing docs); if it names none, create one at the repo root and name it in the report. Never scatter `.ncu-rep` files across random locations. Never put profile artifacts under `solution/`, `src/`, `scripts/`, or other source directories.
+**All profiling artifacts live under one profile root.** Use the directory your project names for profiling artifacts (look in its README, AGENTS.md or contributing docs); if it names none, create one at the repo root and name it in the report. Never scatter `.ncu-rep` files across random locations. Never put profile artifacts under `solution/`, `src/`, `scripts/`, or other source directories. The profile root belongs to the project being profiled, outside the installed skill package. This includes generated preflight and metrics/evidence JSON; the skill's shipped JSON files are runtime profile/metric data.
 
 ```
 <repo_root>/

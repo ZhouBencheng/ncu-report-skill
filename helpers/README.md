@@ -56,12 +56,12 @@ python3 "$HELPERS/plot_timeline.py" --run-dir "$PROFILE_RUN_DIR" \
     --report "$PROFILE_RUN_DIR/reports/full_<tag1>.ncu-rep" --tag <tag1>
 ```
 
-The three report scripts take `--run-dir` and write under `<run-dir>/analysis/`. A report holding several kernels gives one output per kernel (`<tag>.<i>_<function>`); `--kernel REGEX` keeps the matching ones. None of them needs a GPU.
+The three report scripts take `--run-dir` and write under `<run-dir>/analysis/`. Keep this run directory and preflight JSON in the profiled project, outside the skill package; generated metrics/evidence JSON are analysis outputs. A report holding several kernels gives one output per kernel (`<tag>.<i>_<function>`); `--kernel REGEX` keeps the matching ones. None of them needs a GPU.
 
 `ncu_utils.py` finds `ncu_report` from the `ncu` on PATH, the way the CUDA toolkit's `ncu` launcher finds Nsight Compute. If `ncu` is not on PATH, put `<Nsight Compute install>/extras/python` on `PYTHONPATH`.
 
 The analyzer defaults to `--target auto`: report CC/name selects the target; unknown identity uses common candidates. Explicit runtime targets (`sm87`, `orin`, `sm89`, `4090`, `sm100`, `b200`, `sm103`, `b300`, `sm110`, `thor`) are checked against report identity. A target suffix such as `sm110a` describes compilation and is rejected here. `metrics_evidence_<tag>.json` keeps identity, reader, raw units and unavailable-value states. A report-absent metric is not assumed zero or unsupported.
 
-For repeatable verification without a GPU reader: `python3 -m unittest discover -s tests -v`. Actual device/reader validation is recorded in [validation](../reference/validation.md).
+Measured helper outcomes, device/reader limitations and historical regression provenance are recorded in [validation](../reference/validation.md). The installed skill ships reusable helpers and runtime data; regression sources and experiment receipts remain in Git history.
 
 Pass `--collector-version <recorded-version>` once per `--report` when the collection record is available. The analyzer records this producer version separately from the imported reader; without it the producer version stays unknown.
